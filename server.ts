@@ -274,6 +274,280 @@ async function startServer() {
        io.emit("unbuzz", { player_id: data.player_id });
     });
 
+    socket.on("reset_scores", () => {
+       if (socket.id !== gameState.hostId) return;
+       for (const pid of Object.keys(gameState.scoreboard)) {
+          gameState.scoreboard[pid] = 0;
+       }
+       for (const name of Object.keys(gameState.nameToScore)) {
+          gameState.nameToScore[name] = 0;
+       }
+       saveScores();
+       io.emit("scoreboard", { scoreboard: gameState.scoreboard });
+    });
+
+    socket.on("remove_player", (data) => {
+      if (socket.id !== gameState.hostId) return;
+      const pid = data.player_id;
+      delete gameState.players[pid];
+      delete gameState.scoreboard[pid];
+      io.emit("player_removed", { player_id: pid, scoreboard: gameState.scoreboard });
+    });
+
+    socket.on("random_player", () => {
+      if (socket.id !== gameState.hostId) return;
+      const pids = Object.keys(gameState.players);
+      if (pids.length === 0) return;
+      const randomPid = pids[Math.floor(Math.random() * pids.length)];
+      const p = gameState.players[randomPid];
+      if (p) emitToHost("random_player", { player_id: randomPid, player_name: p.name });
+    });
+
+    socket.on("board_set_selector", (data) => {
+      if (socket.id !== gameState.hostId && socket.id !== gameState.boardSelector) return;
+      gameState.boardSelector = data.player_id;
+      const p = gameState.players[data.player_id];
+      io.emit("board_selector", { player_id: data.player_id, player_name: p ? p.name : null });
+    });
+
+    socket.on("board_show_question", () => {
+      if (socket.id !== gameState.hostId) return;
+      if (!gameState.boardCurrentTile) return;
+      gameState.boardOpen = true;
+      const [cIdx, tIdx] = gameState.boardCurrentTile;
+      const tile = gameState.board.categories[cIdx].tiles[tIdx];
+      io.emit("board_show_question", {
+        category_index: cIdx,
+        tile_index: tIdx,
+        question: tile.question,
+        mode: tile.mode || "buzzer",
+        choices: tile.choices,
+        correct_index: tile.correctIndex,
+        correct_value: tile.correctValue
+      });
+    });
+
+    socket.on("board_reveal_answer", () => {
+      if (socket.id !== gameState.hostId) return;
+      if (!gameState.boardCurrentTile) return;
+      const [cIdx, tIdx] = gameState.boardCurrentTile;
+      const tile = gameState.board.categories[cIdx].tiles[tIdx];
+      gameState.boardRevealed.push(`${cIdx}-${tIdx}`);
+      
+      let winners: string[] = [];
+      if (tile.mode === "choice" && typeof tile.correctIndex === "number") {
+         const letter = ["A", "B", "C", "D"][tile.correctIndex];
+         winners = gameState.buzzRecords.filter(r => String(r.answer).toUpperCase() === letter).map(r => r.pid);
+      } else if (tile.mode === "guess" && typeof tile.correctValue === "number") {
+         let minDiff = Infinity;
+         const diffs = gameState.buzzRecords.map(r => {
+            const val = parseFloat(r.answer);
+            if (isNaN(val)) return { pid: r.pid, diff: Infinity };
+            return { pid: r.pid, diff: Math.abs(val - tile.correctValue) };
+         });
+         diffs.forEach(d => { if (d.diff < minDiff) minDiff = d.diff; });
+         if (minDiff < Infinity) {
+            winners = diffs.filter(d => d.diff === minDiff).map(d => d.pid);
+         }
+      }
+
+      if (gameState.boardRiskActive) {
+         Object.keys(gameState.riskBets).forEach(pid => {
+            const bet = gameState.riskBets[pid] || 0;
+            const pResponded = gameState.buzzRecords.some(r => r.pid === pid);
+            if (winners.includes(pid)) {
+               gameState.scoreboard[pid] += bet;
+               gameState.nameToScore[gameState.players[pid]?.name] += bet;
+            } else if (pResponded) {
+               gameState.scoreboard[pid] -= bet;
+               gameState.nameToScore[gameState.players[pid]?.name] -= bet;
+            }
+         });
+      } else if (winners.length > 0) {
+         const basePoints = tile.value || 0;
+         const pts = basePoints * (gameState.doublePointsActive ? 2 : 1) * (tile.double ? 2 : 1);
+         winners.forEach(pid => {
+            if (!gameState.scoreboard[pid]) gameState.scoreboard[pid] = 0;
+            gameState.scoreboard[pid] += pts;
+            if (gameState.players[pid]) gameState.nameToScore[gameState.players[pid].name] += pts;
+         });
+      }
+
+      const answerMsg = {
+        category_index: cIdx,
+        tile_index: tIdx,
+        answer: tile.answer,
+        revealed: gameState.boardRevealed,
+        winners
+      };
+
+      if (winners.length > 0) {
+         const fastest = gameState.buzzRecords.find(r => winners.includes(r.pid));
+         if (fastest) {
+            gameState.boardSelector = fastest.pid;
+            io.emit("board_selector", { player_id: fastest.pid, player_name: gameState.players[fastest.pid]?.name });
+         }
+      }
+
+      saveScores();
+      io.emit("scoreboard", { scoreboard: gameState.scoreboard });
+
+      gameState.boardCurrentTile = null;
+      gameState.boardOpen = false;
+      gameState.boardRiskActive = false;
+      
+      io.emit("board_answer", answerMsg);
+    });
+
+    socket.on("place_bet", (data) => {
+      if (!gameState.boardRiskActive) return;
+      let bet = parseInt(data.bet, 10);
+      if (isNaN(bet) || bet < 0) bet = 0;
+      const maxAllowed = Math.max(500, gameState.scoreboard[socket.id] || 0);
+      if (bet > maxAllowed) bet = maxAllowed;
+      gameState.riskBets[socket.id] = bet;
+      emitToHost("bet_update", { player_id: socket.id, bet });
+    });
+
+    socket.on("confirm_bets", () => {
+      if (socket.id !== gameState.hostId) return;
+      io.emit("bets_confirmed");
+    });
+
+    socket.on("start_final_round", () => {
+      if (socket.id !== gameState.hostId) return;
+      if (!gameState.board || !gameState.board.finalRound) return;
+      
+      const numPlayers = parseInt(gameState.board.finalRound.numPlayers) || 2;
+      const scores = Object.entries(gameState.scoreboard).sort((a,b) => b[1] - a[1]);
+      const preFinalists = scores.slice(0, numPlayers).map(x => x[0]);
+      
+      // Simplifying: just grab top N without tie breaker for now
+      gameState.finalRoundActive = true;
+      gameState.finalistIds = preFinalists;
+      gameState.finalRounds = gameState.board.finalRound.rounds || [{ type: "quickfire", questions: gameState.board.finalRound.quickfire || [] }];
+      gameState.finalStageIdx = 0;
+      gameState.finalQuestionIdx = -1;
+      gameState.finalTurnIdx = -1;
+      gameState.boardCurrentTile = null;
+
+      io.emit("final_round_started", { 
+         finalists: gameState.finalistIds.map(pid => ({ id: pid, name: gameState.players[pid]?.name }))
+      });
+      // Start first stage
+      io.emit("final_stage_info", { type: gameState.finalRounds[0].type });
+    });
+
+    socket.on("next_final_question", () => {
+      if (socket.id !== gameState.hostId) return;
+      gameState.finalQuestionIdx++;
+      const stage = gameState.finalRounds[gameState.finalStageIdx];
+      if (gameState.finalQuestionIdx >= stage.questions.length) {
+         gameState.finalStageIdx++;
+         if (gameState.finalStageIdx >= gameState.finalRounds.length) {
+            gameState.finalRoundActive = false;
+            io.emit("final_round_end", { finalStats: gameState.finalStats });
+            return;
+         }
+         io.emit("final_stage_info", { type: gameState.finalRounds[gameState.finalStageIdx].type });
+         gameState.finalQuestionIdx = -1;
+         return;
+      }
+      const q = stage.questions[gameState.finalQuestionIdx];
+      gameState.pendingFinalQuestion = q;
+      gameState.questionMode = "buzzer";
+      gameState.buzzRecords = [];
+      gameState.buzzLocked = false;
+      emitToHost("final_question", { question: q.question, answer: q.answer });
+      io.emit("final_quickfire_prepare");
+    });
+
+    socket.on("show_final_question", () => {
+      if (socket.id !== gameState.hostId || !gameState.pendingFinalQuestion) return;
+      io.emit("final_question_show", { question: gameState.pendingFinalQuestion.question });
+    });
+
+    socket.on("show_final_answer", () => {
+      if (socket.id !== gameState.hostId || !gameState.pendingFinalQuestion) return;
+      io.emit("final_question_answer", { answer: gameState.pendingFinalQuestion.answer });
+      gameState.pendingFinalQuestion = null;
+    });
+
+    socket.on("next_final_turn", () => {
+      if (socket.id !== gameState.hostId) return;
+      gameState.finalTurnIdx = (gameState.finalTurnIdx + 1) % gameState.finalistIds.length;
+      io.emit("final_turn", { 
+         player_id: gameState.finalistIds[gameState.finalTurnIdx], 
+         player_name: gameState.players[gameState.finalistIds[gameState.finalTurnIdx]]?.name,
+         prompt: gameState.finalRounds[gameState.finalStageIdx]?.prompt 
+      });
+    });
+
+    socket.on("choose_turnlist_winner", (data) => {
+       if (socket.id !== gameState.hostId) return;
+       gameState.finalStats.turnlist[data.player_id] = (gameState.finalStats.turnlist[data.player_id] || 0) + 1;
+       gameState.finalStageIdx++;
+       if (gameState.finalStageIdx >= gameState.finalRounds.length) {
+          gameState.finalRoundActive = false;
+          io.emit("final_round_end", { finalStats: gameState.finalStats });
+          return;
+       }
+       io.emit("final_stage_info", { type: gameState.finalRounds[gameState.finalStageIdx].type });
+       gameState.finalTurnIdx = -1;
+    });
+
+    socket.on("choose_discussion_winner", (data) => {
+       if (socket.id !== gameState.hostId) return;
+       gameState.finalStats.discussion[data.player_id] = (gameState.finalStats.discussion[data.player_id] || 0) + 1;
+       gameState.finalStageIdx++;
+       if (gameState.finalStageIdx >= gameState.finalRounds.length) {
+          gameState.finalRoundActive = false;
+          io.emit("final_round_end", { finalStats: gameState.finalStats });
+          return;
+       }
+       io.emit("final_stage_info", { type: gameState.finalRounds[gameState.finalStageIdx].type });
+    });
+
+    socket.on("choose_final_ranking", (data) => {
+       if (socket.id !== gameState.hostId) return;
+       const ranking = data.ranking.map((pid: string) => ({
+          id: pid,
+          name: gameState.players[pid]?.name,
+          score: gameState.scoreboard[pid] || 0
+       }));
+       io.emit("final_winners_result", { ranking, finalStats: gameState.finalStats });
+    });
+    
+    socket.on("double_points", () => {
+       if (socket.id !== gameState.hostId) return;
+       gameState.doublePointsActive = !gameState.doublePointsActive;
+       io.emit("game_state", gameState);
+    });
+
+    socket.on("show_standings", () => {
+      if (socket.id !== gameState.hostId) return;
+      const leaderboard = Object.keys(gameState.players).map(pid => {
+         return {
+            player_id: pid,
+            player_name: gameState.players[pid].name,
+            score: gameState.scoreboard[pid] || 0
+         };
+      }).sort((a,b) => b.score - a.score);
+      io.emit("standings", { leaderboard });
+    });
+
+    socket.on("end_game", () => {
+      if (socket.id !== gameState.hostId) return;
+      const leaderboard = Object.keys(gameState.players).map(pid => {
+         return {
+            player_id: pid,
+            player_name: gameState.players[pid].name,
+            score: gameState.scoreboard[pid] || 0
+         };
+      }).sort((a,b) => b.score - a.score);
+      io.emit("game_over", { leaderboard });
+    });
+
     // Select Tile
     socket.on("select_tile", (data) => {
       const { category_index, tile_index } = data;
