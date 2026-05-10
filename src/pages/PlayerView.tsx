@@ -85,7 +85,8 @@ export default function PlayerView() {
         boardOpen: false, 
         boardRiskActive: false,
         currentQuestion: null,
-        choices: null
+        choices: null,
+        questionMode: null
       }));
       setBuzzed(false);
     });
@@ -122,6 +123,14 @@ export default function PlayerView() {
 
     socket.on("final_question_answer", ({ answer }) => {
       setGameState(s => ({ ...s, finalAnswer: answer }));
+    });
+
+    socket.on("player_removed", ({ player_id, scoreboard }) => {
+      setGameState(s => {
+         const newPlayers = { ...s.players };
+         delete newPlayers[player_id];
+         return { ...s, players: newPlayers, scoreboard };
+      });
     });
 
     return () => {

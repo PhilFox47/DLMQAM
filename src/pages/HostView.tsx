@@ -60,7 +60,8 @@ export default function HostView() {
         boardCurrentTile: null, 
         boardOpen: false, 
         boardRiskActive: false,
-        riskBets: {}
+        riskBets: {},
+        questionMode: null
       }));
     });
 
@@ -91,6 +92,14 @@ export default function HostView() {
 
     socket.on("final_question", ({ question, answer }) => {
       setGameState(s => ({ ...s, finalQuestion: question, finalAnswer: answer }));
+    });
+
+    socket.on("player_removed", ({ player_id, scoreboard }) => {
+      setGameState(s => {
+         const newPlayers = { ...s.players };
+         delete newPlayers[player_id];
+         return { ...s, players: newPlayers, scoreboard };
+      });
     });
 
     return () => {

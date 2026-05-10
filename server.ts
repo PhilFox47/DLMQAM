@@ -395,6 +395,7 @@ async function startServer() {
       gameState.boardCurrentTile = null;
       gameState.boardOpen = false;
       gameState.boardRiskActive = false;
+      gameState.questionMode = null;
       
       io.emit("board_answer", answerMsg);
     });
