@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import { Server } from "socket.io";
@@ -317,7 +318,10 @@ async function startServer() {
   // Vite Integration
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: { port: PORT + 1 },
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);
