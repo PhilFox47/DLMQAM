@@ -539,7 +539,7 @@ export default function PlayerView() {
                 </div>
               )}
            </div>
-        ) : gameState.board && !gameState.boardOpen && (
+        ) : gameState.board && !gameState.boardOpen && !gameState.boardCurrentTile && (
            <div className="w-full max-w-5xl flex flex-col items-center">
              {gameState.boardSelector === socket.id ? (
                <div className="bg-yellow-400 text-black px-6 py-2 mb-4 brutal-border brutal-shadow font-black uppercase text-xl animate-pulse">
