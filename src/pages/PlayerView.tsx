@@ -239,6 +239,20 @@ export default function PlayerView() {
     };
   }, [name, guest]);
 
+  const [showQuestionIntro, setShowQuestionIntro] = useState(false);
+  const tCIdx = gameState?.boardCurrentTile?.[0];
+  const tTIdx = gameState?.boardCurrentTile?.[1];
+
+  useEffect(() => {
+    if (tCIdx !== undefined && tTIdx !== undefined) {
+       setShowQuestionIntro(true);
+       const timer = setTimeout(() => setShowQuestionIntro(false), 3000);
+       return () => clearTimeout(timer);
+    } else {
+       setShowQuestionIntro(false);
+    }
+  }, [tCIdx, tTIdx]);
+
   if (!gameState) {
     return <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center">Connecting to server...</div>;
   }
@@ -264,19 +278,7 @@ export default function PlayerView() {
 
   const myScore = gameState.scoreboard?.[socket.id] || 0;
   
-  const [showQuestionIntro, setShowQuestionIntro] = useState(false);
-  const tCIdx = gameState?.boardCurrentTile?.[0];
-  const tTIdx = gameState?.boardCurrentTile?.[1];
 
-  useEffect(() => {
-    if (tCIdx !== undefined && tTIdx !== undefined) {
-       setShowQuestionIntro(true);
-       const timer = setTimeout(() => setShowQuestionIntro(false), 3000);
-       return () => clearTimeout(timer);
-    } else {
-       setShowQuestionIntro(false);
-    }
-  }, [tCIdx, tTIdx]);
   
   const renderInputArea = () => {
     if (gameState.boardCurrentTile && !gameState.boardOpen) {
