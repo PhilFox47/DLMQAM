@@ -85,7 +85,8 @@ export default function HostView() {
         questionMode: tile.mode || 'buzzer',
         boardRiskActive: !!tile.risk,
         boardOpen: false,
-        buzzRecords: []
+        buzzRecords: [],
+        buzzLocked: false
       }));
     });
 
@@ -436,24 +437,26 @@ export default function HostView() {
                 </div>
              ) : (
                 <div className="flex flex-col xl:flex-row gap-6 w-full items-start">
-                  <div className="flex flex-col gap-6 w-full xl:w-1/2">
-                    <div className="bg-white brutal-border brutal-shadow p-6 flex flex-col md:flex-row items-center gap-4 justify-between -mb-4 relative z-10 mx-6">
-                      <span className="font-black uppercase tracking-widest text-zinc-500">Board Navigator</span>
-                      <select
-                        value={gameState.boardSelector || ""}
-                        onChange={(e) => socket.emit("board_set_selector", { player_id: e.target.value })}
-                        className="bg-yellow-100 border-2 border-black px-4 py-2 font-black uppercase"
-                      >
-                        <option value="">-- Host Control --</option>
-                        {Object.values(gameState.players).map((p: any) => (
-                          <option key={p.id} value={p.id}>{p.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <JeopardyBoard gameState={gameState} isHost={true} />
-                  </div>
+                  {!gameState.boardCurrentTile && (
+                     <div className="flex flex-col gap-6 w-full xl:w-1/2">
+                       <div className="bg-white brutal-border brutal-shadow p-6 flex flex-col md:flex-row items-center gap-4 justify-between -mb-4 relative z-10 mx-6">
+                         <span className="font-black uppercase tracking-widest text-zinc-500">Board Navigator</span>
+                         <select
+                           value={gameState.boardSelector || ""}
+                           onChange={(e) => socket.emit("board_set_selector", { player_id: e.target.value })}
+                           className="bg-yellow-100 border-2 border-black px-4 py-2 font-black uppercase"
+                         >
+                           <option value="">-- Host Control --</option>
+                           {Object.values(gameState.players).map((p: any) => (
+                             <option key={p.id} value={p.id}>{p.name}</option>
+                           ))}
+                         </select>
+                       </div>
+                       <JeopardyBoard gameState={gameState} isHost={true} />
+                     </div>
+                  )}
 
-                  <div className="w-full xl:w-1/2 flex flex-col gap-6">
+                  <div className={clsx("flex flex-col gap-6", gameState.boardCurrentTile ? "w-full" : "w-full xl:w-1/2")}>
                     {gameState.boardCurrentTile ? (() => {
                       const [cIdx, tIdx] = gameState.boardCurrentTile;
                       const tile = gameState.board.categories[cIdx]?.tiles?.[tIdx];

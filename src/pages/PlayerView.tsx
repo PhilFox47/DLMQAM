@@ -18,6 +18,7 @@ export default function PlayerView() {
   const [buzzed, setBuzzed] = useState(false);
   const [answerContent, setAnswerContent] = useState("");
   const [riskBet, setRiskBet] = useState(0);
+  const [hasPlacedBet, setHasPlacedBet] = useState(false);
 
   const buzzerSoundRef = useRef<HTMLAudioElement | null>(null);
 
@@ -149,9 +150,12 @@ export default function PlayerView() {
         ...s, 
         boardCurrentTile: [payload.category_index, payload.tile_index],
         boardRiskActive: payload.tile?.risk || false,
-        questionMode: payload.tile?.mode || 'buzzer'
+        questionMode: payload.tile?.mode || 'buzzer',
+        buzzLocked: false
       }));
       setBuzzed(false);
+      setAnswerContent("");
+      setHasPlacedBet(false);
     });
 
     socket.on("board_show_question", (data) => {
@@ -217,6 +221,14 @@ export default function PlayerView() {
       });
     });
 
+    socket.on("player_joined", ({ player, profile, scoreboard }) => {
+      setGameState(s => {
+         if (!s) return s;
+         const newPlayers = { ...s.players, [player.id]: player };
+         return { ...s, players: newPlayers, scoreboard };
+      });
+    });
+
     socket.on("countdown_start", ({ seconds }) => setGameState(s => ({ ...s, countdownActive: true, countdownSeconds: seconds })));
     socket.on("countdown_update", ({ seconds }) => setGameState(s => ({ ...s, countdownSeconds: seconds })));
     socket.on("countdown_end", () => setGameState(s => ({ ...s, countdownActive: false })));
@@ -231,6 +243,8 @@ export default function PlayerView() {
       socket.off("buzz_update");
       socket.off("unbuzz");
       socket.off("board_tile_selected");
+      socket.off("player_removed");
+      socket.off("player_joined");
       socket.off("countdown_start");
       socket.off("countdown_update");
       socket.off("countdown_end");
@@ -274,6 +288,7 @@ export default function PlayerView() {
 
   const handlePlaceBet = () => {
     socket.emit("place_bet", { bet: riskBet });
+    setHasPlacedBet(true);
   };
 
   const myScore = gameState.scoreboard?.[socket.id] || 0;
@@ -283,6 +298,14 @@ export default function PlayerView() {
   const renderInputArea = () => {
     if (gameState.boardCurrentTile && !gameState.boardOpen) {
       if (gameState.boardRiskActive && !gameState.betsConfirmed) {
+        if (hasPlacedBet) {
+          return (
+            <div className="flex flex-col gap-6 w-full max-w-md mx-auto bg-white brutal-border brutal-shadow p-8 mt-8 text-center">
+              <p className="text-xl font-black uppercase italic text-emerald-600">Wager Committed: {riskBet}</p>
+              <p className="text-sm font-bold opacity-60">Waiting for Host...</p>
+            </div>
+          );
+        }
         return (
           <div className="flex flex-col gap-6 w-full max-w-md mx-auto bg-white brutal-border brutal-shadow p-8">
             <p className="text-sm font-black uppercase tracking-widest text-zinc-500 mb-2">Configure Risk Wager</p>
@@ -315,12 +338,6 @@ export default function PlayerView() {
         const letters = ["A", "B", "C", "D"];
         return (
           <div className="flex flex-col gap-8 w-full max-w-2xl mx-auto items-center mt-8">
-            {currentTile && currentTile.question && gameState.boardOpen && (
-               <div className="bg-white brutal-border brutal-shadow text-black p-6 w-full text-left">
-                  <span className="opacity-50 text-xs font-black uppercase tracking-widest block mb-2">Prompt</span>
-                  <p className="text-2xl font-black">{currentTile.question.content}</p>
-               </div>
-            )}
             <div className="grid grid-cols-2 gap-6 w-full">
               {letters.map((letter, idx) => (
                 <button
@@ -334,17 +351,18 @@ export default function PlayerView() {
                 </button>
               ))}
             </div>
+            {currentTile && currentTile.question && gameState.boardOpen && (
+               <div className="bg-white brutal-border brutal-shadow text-black p-6 w-full text-left">
+                  <span className="opacity-50 text-xs font-black uppercase tracking-widest block mb-2">Prompt</span>
+                  <p className="text-2xl font-black">{currentTile.question.content}</p>
+               </div>
+            )}
           </div>
         );
       case "guess":
       case "text":
         return (
           <div className="flex flex-col gap-6 w-full max-w-md mx-auto bg-white brutal-border brutal-shadow p-8 mt-8">
-            {currentTile && currentTile.question && gameState.boardOpen && (
-               <div className="text-left mb-4 border-b-4 border-black pb-4">
-                  <p className="text-xl font-black uppercase italic">{currentTile.question.content}</p>
-               </div>
-            )}
             <p className="text-sm font-black uppercase tracking-widest text-zinc-500 mb-2">Input Query Terminal</p>
             <input 
                type={gameState.questionMode === "guess" ? "number" : "text"}
@@ -360,14 +378,19 @@ export default function PlayerView() {
             >
               SUBMIT
             </button>
+            {currentTile && currentTile.question && gameState.boardOpen && (
+               <div className="text-left mt-4 pt-4 border-t-4 border-black">
+                  <p className="text-xl font-black uppercase italic">{currentTile.question.content}</p>
+               </div>
+            )}
           </div>
         );
       case "buzzer":
       default:
         return (
-          <div className="flex flex-col justify-center items-center mt-8">
-            {currentTile && currentTile.question && (
-               <div className="bg-white brutal-border brutal-shadow text-black p-6 w-full max-w-2xl text-left mb-12">
+          <div className="flex flex-col flex-col-reverse justify-center items-center mt-8 gap-12">
+            {currentTile && currentTile.question && gameState.boardOpen && (
+               <div className="bg-white brutal-border brutal-shadow text-black p-6 w-full max-w-2xl text-left">
                   <p className="text-2xl font-black uppercase italic">{currentTile.question.content}</p>
                </div>
             )}

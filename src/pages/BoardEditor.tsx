@@ -116,7 +116,20 @@ export default function BoardEditor() {
               <div key={rowIdx} className="flex border-b-4 border-black last:border-b-0 h-40">
                 {boardData.categories.map((cat: any, cIdx: number) => {
                   const tile = cat.tiles[rowIdx];
-                  const hasContent = tile.question.content || tile.question.src;
+                  const tMode = tile.mode || 'buzzer';
+                  const hasQTextOrSrc = !!(tile.question?.content || tile.question?.src);
+                  const hasAnsTextOrSrc = !!(tile.answer?.content || tile.answer?.src);
+                  let hasContent = false;
+                  if (hasQTextOrSrc && hasAnsTextOrSrc) {
+                     if (tMode === 'buzzer' || tMode === 'text') {
+                        hasContent = true;
+                     } else if (tMode === 'choice') {
+                        const hasChoices = tile.choices && tile.choices.filter((x: string) => !!x).length >= 2;
+                        hasContent = !!(hasChoices && typeof tile.correctIndex === 'number' && tile.correctIndex >= 0);
+                     } else if (tMode === 'guess') {
+                        hasContent = typeof tile.correctValue === 'number';
+                     }
+                  }
                   return (
                     <div 
                       key={cIdx} 

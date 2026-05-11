@@ -218,7 +218,7 @@ async function startServer() {
         socket.emit("registered", { role: "player", id: socket.id, name, guest: !!guest, profile });
         socket.emit("game_state", gameState);
 
-        emitToHost("player_joined", { player: gameState.players[socket.id], profile, scoreboard: gameState.scoreboard });
+        io.emit("player_joined", { player: gameState.players[socket.id], profile, scoreboard: gameState.scoreboard });
       }
     });
 
