@@ -3,6 +3,8 @@ import { useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { socket } from "../lib/socket";
 import JeopardyBoard from "./JeopardyBoard";
+import { Edit2 } from "lucide-react";
+import ProfileEditor from "../components/ProfileEditor";
 
 export default function PlayerView() {
   const [params] = useSearchParams();
@@ -11,11 +13,42 @@ export default function PlayerView() {
 
   const [gameState, setGameState] = useState<any>(null);
   const [myProfile, setMyProfile] = useState<any>(null);
+  const [showProfileEditor, setShowProfileEditor] = useState(false);
   const [buzzed, setBuzzed] = useState(false);
   const [answerContent, setAnswerContent] = useState("");
   const [riskBet, setRiskBet] = useState(0);
 
   const buzzerSoundRef = useRef<HTMLAudioElement | null>(null);
+
+  const fetchMyProfile = () => {
+    fetch("/api/profiles")
+      .then(r => r.json())
+      .then(data => {
+        const profiles = data.profiles || [];
+        const p = profiles.find((x: any) => x.name === name);
+        if (p) {
+          setMyProfile(p);
+        }
+      });
+  };
+
+  const handleSaveProfile = (oldName: string, updatedProfile: any) => {
+    // If name changed, we may need to reload or change URL. Keep it simple: update then update state
+    fetch("/api/profiles", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: oldName, ...updatedProfile })
+    }).then(r => r.json()).then(data => {
+      setShowProfileEditor(false);
+      if (data.profile) {
+        setMyProfile(data.profile);
+        // If name changes, we should technically reconnect with new name, but let's just refresh to ensure consistency
+        if (data.profile.name !== params.get("name")) {
+          window.location.href = `/player?name=${encodeURIComponent(data.profile.name)}`;
+        }
+      }
+    });
+  };
 
   useEffect(() => {
     socket.connect();
@@ -57,6 +90,22 @@ export default function PlayerView() {
       if (player_id === socket.id) setBuzzed(false);
     });
 
+    socket.on("board", ({ board, revealed, playedValues }) => {
+      setGameState(s => ({
+        ...s,
+        board,
+        boardRevealed: revealed,
+        boardPlayedValues: playedValues || {},
+        boardCurrentTile: null,
+        boardOpen: false,
+        boardRiskActive: false
+      }));
+    });
+
+    socket.on("board_selector", ({ player_id }) => {
+      setGameState(s => ({ ...s, boardSelector: player_id }));
+    });
+
     socket.on("board_tile_selected", (payload) => {
       setGameState(s => ({ 
         ...s, 
@@ -71,9 +120,7 @@ export default function PlayerView() {
       setGameState(s => ({ 
         ...s, 
         boardOpen: true, 
-        currentQuestion: data.question,
-        questionMode: data.mode,
-        choices: data.choices
+        questionMode: data.mode
       }));
     });
 
@@ -81,11 +128,10 @@ export default function PlayerView() {
       setGameState(s => ({ 
         ...s, 
         boardRevealed: data.revealed, 
+        boardPlayedValues: data.playedValues || s.boardPlayedValues || {},
         boardCurrentTile: null, 
         boardOpen: false, 
         boardRiskActive: false,
-        currentQuestion: null,
-        choices: null,
         questionMode: null
       }));
       setBuzzed(false);
@@ -199,15 +245,18 @@ export default function PlayerView() {
       return <div className="text-white text-2xl font-black italic mt-12 bg-black px-6 py-4 brutal-shadow uppercase">Tile selected. Waiting for prompt...</div>;
     }
     
+    const currentTile = gameState.boardCurrentTile && gameState.board ? 
+      gameState.board.categories[gameState.boardCurrentTile[0]]?.tiles[gameState.boardCurrentTile[1]] : null;
+    
     switch (gameState.questionMode) {
       case "choice":
         const letters = ["A", "B", "C", "D"];
         return (
           <div className="flex flex-col gap-8 w-full max-w-2xl mx-auto items-center mt-8">
-            {gameState.currentQuestion && (
+            {currentTile && currentTile.question && (
                <div className="bg-white brutal-border brutal-shadow text-black p-6 w-full text-left">
                   <span className="opacity-50 text-xs font-black uppercase tracking-widest block mb-2">Prompt</span>
-                  <p className="text-2xl font-black">{gameState.currentQuestion.content}</p>
+                  <p className="text-2xl font-black">{currentTile.question.content}</p>
                </div>
             )}
             <div className="grid grid-cols-2 gap-6 w-full">
@@ -219,7 +268,7 @@ export default function PlayerView() {
                   onClick={() => handleBuzz(letter)}
                 >
                   <span className="text-4xl block mb-2">{letter}</span>
-                  {gameState.choices && gameState.choices[idx] && <span className="opacity-80 block">{gameState.choices[idx]}</span>}
+                  {currentTile && currentTile.choices && currentTile.choices[idx] && <span className="opacity-80 block">{currentTile.choices[idx]}</span>}
                 </button>
               ))}
             </div>
@@ -229,9 +278,9 @@ export default function PlayerView() {
       case "text":
         return (
           <div className="flex flex-col gap-6 w-full max-w-md mx-auto bg-white brutal-border brutal-shadow p-8 mt-8">
-            {gameState.currentQuestion && (
+            {currentTile && currentTile.question && (
                <div className="text-left mb-4 border-b-4 border-black pb-4">
-                  <p className="text-xl font-black uppercase italic">{gameState.currentQuestion.content}</p>
+                  <p className="text-xl font-black uppercase italic">{currentTile.question.content}</p>
                </div>
             )}
             <p className="text-sm font-black uppercase tracking-widest text-zinc-500 mb-2">Input Query Terminal</p>
@@ -247,7 +296,7 @@ export default function PlayerView() {
               onClick={() => handleBuzz()}
               className="bg-blue-500 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:border-zinc-300 font-black tracking-widest text-2xl py-6 brutal-border brutal-shadow hover:bg-blue-400 active:translate-y-1 transition-all text-black uppercase w-full"
             >
-              EXECUTE
+              SUBMIT
             </button>
           </div>
         );
@@ -255,9 +304,9 @@ export default function PlayerView() {
       default:
         return (
           <div className="flex flex-col justify-center items-center mt-8">
-            {gameState.currentQuestion && (
+            {currentTile && currentTile.question && (
                <div className="bg-white brutal-border brutal-shadow text-black p-6 w-full max-w-2xl text-left mb-12">
-                  <p className="text-2xl font-black uppercase italic">{gameState.currentQuestion.content}</p>
+                  <p className="text-2xl font-black uppercase italic">{currentTile.question.content}</p>
                </div>
             )}
             <button 
@@ -268,7 +317,7 @@ export default function PlayerView() {
               }}
               className="w-64 h-64 bg-black disabled:bg-zinc-200 disabled:border-zinc-300 disabled:text-zinc-400 text-white font-black text-6xl italic tracking-tighter brutal-border brutal-shadow hover:scale-105 active:scale-95 active:translate-y-4 transition-transform flex items-center justify-center uppercase"
             >
-              HIT
+              BUZZ
             </button>
           </div>
         );
@@ -276,11 +325,27 @@ export default function PlayerView() {
   };
 
   return (
-    <div className="min-h-screen bg-yellow-400 text-black p-6 font-sans flex flex-col selection:bg-white">
-      <div className="flex items-center justify-between bg-white brutal-border brutal-shadow px-6 py-4 mb-12">
+    <div className="min-h-screen bg-yellow-400 text-black p-6 font-sans flex flex-col selection:bg-white relative">
+      {showProfileEditor && (
+        <ProfileEditor
+          profile={myProfile || { name }}
+          onClose={() => setShowProfileEditor(false)}
+          onSave={handleSaveProfile}
+        />
+      )}
+      <div className="flex items-center justify-between bg-white brutal-border brutal-shadow px-6 py-4 mb-12 relative group cursor-pointer" onClick={() => setShowProfileEditor(true)}>
         <div className="flex items-center gap-6">
-          <img src={myProfile?.avatar || "https://i.pravatar.cc/100"} alt="Avatar" className="w-16 h-16 brutal-border" />
-          <h2 className="text-3xl font-black uppercase italic tracking-tighter">{name}</h2>
+          <div className="relative">
+            {myProfile?.avatar ? (
+              <img src={myProfile.avatar} alt="Avatar" className="w-16 h-16 brutal-border bg-emerald-200 object-cover" />
+            ) : (
+              <div className="w-16 h-16 brutal-border bg-zinc-200 flex items-center justify-center text-3xl font-black text-black">?</div>
+            )}
+            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+              <Edit2 size={24}/>
+            </div>
+          </div>
+          <h2 className="text-3xl font-black uppercase italic tracking-tighter">{myProfile?.name || name}</h2>
         </div>
         <div className="text-right">
           <p className="text-zinc-500 text-xs font-black uppercase tracking-widest mb-1">CREDITS</p>
@@ -335,8 +400,19 @@ export default function PlayerView() {
                 </div>
               )}
            </div>
-        ) : gameState.board && !gameState.boardOpen && !gameState.questionMode && (
-           <div className="w-full max-w-5xl"><JeopardyBoard gameState={gameState} isHost={false} /></div>
+        ) : gameState.board && !gameState.boardOpen && (
+           <div className="w-full max-w-5xl flex flex-col items-center">
+             {gameState.boardSelector === socket.id ? (
+               <div className="bg-yellow-400 text-black px-6 py-2 mb-4 brutal-border brutal-shadow font-black uppercase text-xl animate-pulse">
+                 Your turn to pick a question!
+               </div>
+             ) : (
+               <div className="bg-white text-zinc-500 px-6 py-2 mb-4 brutal-border text-sm font-black uppercase">
+                 {gameState.boardSelector ? `${gameState.players[gameState.boardSelector]?.name || 'Someone'} is picking...` : 'Waiting for host to select who picks...'}
+               </div>
+             )}
+             <JeopardyBoard gameState={gameState} isHost={false} />
+           </div>
         )}
         
         {(!gameState.finalRoundActive || gameState.isFinalist) && renderInputArea()}

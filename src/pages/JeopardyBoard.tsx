@@ -32,29 +32,34 @@ export default function JeopardyBoard({ gameState, isHost }: { gameState: any, i
              const isActive = gameState.boardCurrentTile?.[0] === catIdx && gameState.boardCurrentTile?.[1] === rowIdx;
              const tile = cat.tiles[rowIdx];
              
-             let bgClass = "bg-white hover:bg-yellow-100 cursor-pointer text-black";
+             const canClick = !isUsed && !isActive && (isHost || gameState.boardSelector === socket.id);
+             let bgClass = "bg-white text-black";
              if (isUsed) bgClass = "bg-zinc-200 opacity-50 cursor-not-allowed";
-             if (isActive) bgClass = "bg-black text-white animate-pulse";
+             else if (isActive) bgClass = "bg-black text-white animate-pulse";
+             else if (canClick) bgClass += " hover:bg-yellow-100 cursor-pointer text-black block hover:-translate-y-1 hover:shadow-lg focus:outline-none focus:ring-4 focus:ring-black";
+             else bgClass += " cursor-not-allowed";
 
              return (
-               <div 
+               <button 
                  key={catIdx} 
-                 onClick={() => !isUsed && !isActive && handleTileClick(catIdx, rowIdx)}
+                 onClick={() => canClick && handleTileClick(catIdx, rowIdx)}
                  className={clsx(
-                    "flex-[3] border-r-4 border-black last:border-r-0 aspect-video flex flex-col items-center justify-center transition-all relative group",
-                    bgClass
+                    "flex-[3] border-r-4 border-black last:border-r-0 flex flex-col items-center justify-center transition-all relative group",
+                    bgClass,
+                    isHost ? "py-2 sm:py-4 lg:py-6" : "aspect-video"
                  )}
                >
-                 <span className={clsx("text-5xl font-black italic tracking-tighter", isActive ? "text-white" : "text-black", isUsed ? "line-through opacity-20" : "")}>
-                   {tile.value * (gameState.doublePointsActive ? 2 : 1) * (tile.double ? 2 : 1)}
+                 <span className={clsx(isHost ? "text-2xl lg:text-3xl" : "text-5xl", "font-black italic tracking-tighter", isActive ? "text-white" : "text-black", isUsed ? "line-through opacity-20" : "")}>
+                   {gameState.boardPlayedValues?.[key] !== undefined ? gameState.boardPlayedValues[key] : tile.value * (gameState.doublePointsActive ? 2 : 1)}
                  </span>
                  {isHost && !isUsed && (
-                   <div className="absolute top-2 right-2 flex gap-1">
-                     {tile.double && <span className="w-3 h-3 bg-yellow-500 brutal-border" title="Double Trouble"/>}
-                     {tile.risk && <span className="w-3 h-3 bg-red-500 brutal-border" title="Risk"/>}
+                   <div className="absolute top-2 right-2 flex flex-col gap-1 items-end">
+                     {tile.mode && <span className="px-1 py-0.5 bg-blue-200 text-blue-900 border-2 border-black text-[10px] font-black uppercase leading-none">{tile.mode}</span>}
+                     {tile.double && <span className="px-1 py-0.5 bg-yellow-400 text-black border-2 border-black text-[10px] font-black uppercase leading-none">2X</span>}
+                     {tile.risk && <span className="px-1 py-0.5 bg-red-500 text-white border-2 border-black text-[10px] font-black uppercase leading-none">RISK</span>}
                    </div>
                  )}
-               </div>
+               </button>
              );
           })}
         </div>

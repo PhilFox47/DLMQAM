@@ -128,7 +128,13 @@ export default function BoardEditor() {
                       )}
                     >
                       <span className="text-4xl font-black italic tracking-tighter">{tile.value}</span>
-                      <span className="text-sm uppercase mt-2 font-black tracking-widest">{tile.mode}</span>
+                      <div className="flex flex-col items-center mt-2 gap-1">
+                        {tile.mode && <span className="px-1.5 py-0.5 bg-blue-200 text-blue-900 border-2 border-black text-[10px] font-black uppercase leading-none">{tile.mode}</span>}
+                        <div className="flex gap-1">
+                           {tile.double && <span className="px-1.5 py-0.5 bg-yellow-400 text-black border-2 border-black text-[10px] font-black uppercase leading-none">2X</span>}
+                           {tile.risk && <span className="px-1.5 py-0.5 bg-red-500 text-white border-2 border-black text-[10px] font-black uppercase leading-none">RISK</span>}
+                        </div>
+                      </div>
                       {hasContent ? <Check size={24} className="text-emerald-500 absolute bottom-3 right-3"/> : null}
                     </div>
                   );

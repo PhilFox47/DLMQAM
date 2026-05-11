@@ -95,10 +95,11 @@ async function startServer() {
       if (!data || !data.categories) return res.status(400).json({ error: "Invalid board" });
       gameState.board = data;
       gameState.boardRevealed = [];
+      gameState.boardPlayedValues = {};
       gameState.boardSelector = null;
       gameState.boardCurrentTile = null;
       gameState.boardOpen = false;
-      io.emit("board", { board: gameState.board, revealed: [] });
+      io.emit("board", { board: gameState.board, revealed: [], playedValues: {} });
       res.json({ status: "ok" });
     } catch (err) {
       res.status(500).json({ error: "Failed to import board" });
@@ -124,6 +125,7 @@ async function startServer() {
     
     board: null as any,
     boardRevealed: [] as string[],
+    boardPlayedValues: {} as Record<string, number>,
     boardSelector: null as string | null,
     boardCurrentTile: null as [number, number] | null,
     boardOpen: false,
@@ -181,6 +183,14 @@ async function startServer() {
         socket.emit("registered", { role: "host", id: socket.id, name: name || "Host" });
         socket.emit("game_state", gameState);
       } else if (role === "player" && name) {
+        // Find existing player with the same name
+        const existingPid = Object.keys(gameState.players).find(pid => gameState.players[pid].name === name);
+        if (existingPid && existingPid !== socket.id) {
+          delete gameState.players[existingPid];
+          delete gameState.scoreboard[existingPid];
+          emitToHost("player_removed", { player_id: existingPid, scoreboard: gameState.scoreboard });
+        }
+
         // Player
         gameState.players[socket.id] = { id: socket.id, name, role: "player", isGuest: !!guest, pingMs: 0, status: "online" };
         
@@ -202,9 +212,8 @@ async function startServer() {
       }
     });
 
-    socket.on("ping_test", (data) => {
-      // Estimate ping
-      const rtt = Date.now() - data.timestamp;
+    socket.on("server_pong", (data) => {
+      const rtt = Date.now() - data.time;
       const pingMs = rtt / 2;
       const p = gameState.players[socket.id];
       if (p) {
@@ -229,7 +238,7 @@ async function startServer() {
       if (gameState.buzzRecords.some(r => r.pid === socket.id)) return;
       if (gameState.finalRoundActive && !gameState.finalistIds.includes(socket.id)) return;
 
-      const adjustedTime = Date.now() + p.pingMs;
+      const adjustedTime = Date.now() - p.pingMs;
       gameState.buzzRecords.push({ pid: socket.id, time: adjustedTime, answer: data.answer });
       gameState.buzzRecords.sort((a, b) => a.time - b.time);
 
@@ -247,6 +256,12 @@ async function startServer() {
       if (p) {
         gameState.nameToScore[p.name] = gameState.scoreboard[player_id];
         saveScores();
+      }
+
+      // If positive points are awarded, this person probably got the question right, so they get to pick next
+      if (points > 0) {
+         gameState.boardSelector = player_id;
+         io.emit("board_selector", { player_id, player_name: p?.name });
       }
 
       io.emit("scoreboard", { scoreboard: gameState.scoreboard });
@@ -332,7 +347,11 @@ async function startServer() {
       if (!gameState.boardCurrentTile) return;
       const [cIdx, tIdx] = gameState.boardCurrentTile;
       const tile = gameState.board.categories[cIdx].tiles[tIdx];
-      gameState.boardRevealed.push(`${cIdx}-${tIdx}`);
+      
+      const key = `${cIdx}-${tIdx}`;
+      gameState.boardRevealed.push(key);
+      const displayPts = (tile.value || 0) * (gameState.doublePointsActive ? 2 : 1);
+      gameState.boardPlayedValues[key] = displayPts;
       
       let winners: string[] = [];
       if (tile.mode === "choice" && typeof tile.correctIndex === "number") {
@@ -378,6 +397,7 @@ async function startServer() {
         tile_index: tIdx,
         answer: tile.answer,
         revealed: gameState.boardRevealed,
+        playedValues: gameState.boardPlayedValues,
         winners
       };
 
@@ -589,6 +609,10 @@ async function startServer() {
       }
     });
   });
+
+  setInterval(() => {
+    io.emit("server_ping", { time: Date.now() });
+  }, 2000);
 
   // Vite Integration
   if (process.env.NODE_ENV !== "production") {

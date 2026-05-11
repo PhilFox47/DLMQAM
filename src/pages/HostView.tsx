@@ -6,6 +6,7 @@ import { Users, Trello, Lock, Unlock, Play, Settings2, SkipForward, X, RefreshCw
 import clsx from "clsx";
 
 import JeopardyBoard from "./JeopardyBoard";
+import ProfilesManagement from "./ProfilesManagement";
 
 export default function HostView() {
   const [params] = useSearchParams();
@@ -14,6 +15,7 @@ export default function HostView() {
   const password = params.get("password") || "";
 
   const [gameState, setGameState] = useState<any>(null);
+  const [showProfiles, setShowProfiles] = useState(false);
 
   useEffect(() => {
     socket.connect();
@@ -28,15 +30,33 @@ export default function HostView() {
     });
     
     socket.on("player_joined", ({ player, profile, scoreboard }) => {
-      // handled by game_state sync. Wait, actually I should keep syncing full state or apply patches.
-      // Usually, in backend I just emitted diffs, but for simplicity I will modify backend to always emit entire state or emit specific patches that I map.
-      // Actually, my server.ts emits entire game_state on register, but other things like "scoreboard", "buzz_update" need to be implemented.
+      setGameState(s => ({
+        ...s,
+        players: { ...s.players, [player.id]: player },
+        scoreboard
+      }));
     });
 
     socket.on("buzz_update", ({ records }) => setGameState(s => ({ ...s, buzzRecords: records })));
     socket.on("scoreboard", ({ scoreboard }) => setGameState(s => ({ ...s, scoreboard })));
     socket.on("lock_status", ({ locked }) => setGameState(s => ({ ...s, buzzLocked: locked })));
     socket.on("unbuzz", ({ player_id }) => setGameState(s => ({ ...s, buzzRecords: s.buzzRecords.filter(r => r.pid !== player_id) })));
+
+    socket.on("board", ({ board, revealed, playedValues }) => {
+      setGameState(s => ({
+        ...s,
+        board,
+        boardRevealed: revealed,
+        boardPlayedValues: playedValues || {},
+        boardCurrentTile: null,
+        boardOpen: false,
+        boardRiskActive: false
+      }));
+    });
+
+    socket.on("board_selector", ({ player_id }) => {
+      setGameState(s => ({ ...s, boardSelector: player_id }));
+    });
 
     socket.on("board_tile_selected", ({ category_index, tile_index, tile }) => {
       setGameState(s => ({ 
@@ -57,6 +77,7 @@ export default function HostView() {
       setGameState(s => ({ 
         ...s, 
         boardRevealed: data.revealed, 
+        boardPlayedValues: data.playedValues || s.boardPlayedValues || {},
         boardCurrentTile: null, 
         boardOpen: false, 
         boardRiskActive: false,
@@ -141,8 +162,8 @@ export default function HostView() {
     const pts = basePoints * (gameState.doublePointsActive ? 2 : 1) * (isDouble ? 2 : 1);
 
     return (
-      <div className="bg-white brutal-border brutal-shadow p-6 mt-12">
-        <h3 className="text-sm uppercase font-black text-black mb-6 tracking-widest block border-b-4 border-black pb-2">INPUT SEQUENCE</h3>
+      <div className="bg-white brutal-border brutal-shadow p-4 mt-6">
+        <h3 className="text-xs uppercase font-black text-black mb-4 tracking-widest block border-b-4 border-black pb-2">INPUT SEQUENCE</h3>
         <AnimatePresence>
           {gameState.buzzRecords.map((record: any, idx: number) => {
             const player = gameState.players[record.pid];
@@ -153,74 +174,82 @@ export default function HostView() {
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, scale: 0.9 }}
-                className="flex items-center justify-between p-4 bg-zinc-50 mb-4 border-l-8 border-black border border-y-black border-r-black brutal-shadow-sm"
+                className="flex items-center justify-between p-3 bg-zinc-50 mb-3 border-l-8 border-black border border-y-black border-r-black brutal-shadow-sm"
               >
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 bg-black text-white flex items-center justify-center font-black text-xl italic tracking-tighter">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 bg-black text-white flex items-center justify-center font-black text-sm italic tracking-tighter">
                     {idx + 1}
                   </div>
                   <div>
-                    <span className="font-black uppercase tracking-widest text-lg">{player.name}</span>
-                    {record.answer && <span className="ml-2 text-blue-600 font-bold tracking-tight block">RAW_IN: {record.answer}</span>}
+                    <div className="flex items-center gap-2">
+                      <span className="font-black uppercase tracking-widest text-sm">{player.name}</span>
+                      {idx > 0 && gameState.buzzRecords[0] && (
+                        <span className="text-zinc-500 font-bold uppercase text-[10px] py-0.5 px-1.5 bg-zinc-200 border border-zinc-400">
+                          +{Math.round(record.time - gameState.buzzRecords[0].time)}ms
+                        </span>
+                      )}
+                    </div>
+                    {record.answer && <span className="text-blue-600 font-bold tracking-tight text-xs block mt-0.5">RAW_IN: {record.answer}</span>}
                     {gameState.boardRiskActive && gameState.riskBets?.[record.pid] !== undefined && (
-                      <span className="ml-2 text-red-600 font-bold tracking-tight block">WAGER: {gameState.riskBets[record.pid]}</span>
+                      <span className="text-red-600 font-bold tracking-tight text-xs block mt-0.5">WAGER: {gameState.riskBets[record.pid]}</span>
                     )}
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   {gameState.boardRiskActive && gameState.riskBets?.[record.pid] !== undefined ? (
                     <>
-                      <button onClick={() => handleScore(record.pid, gameState.riskBets[record.pid])} className="px-4 py-2 bg-emerald-400 border-2 border-black text-black hover:bg-emerald-300 font-black tracking-widest uppercase">+{gameState.riskBets[record.pid]}</button>
-                      <button onClick={() => handleScore(record.pid, -gameState.riskBets[record.pid])} className="px-4 py-2 bg-red-400 border-2 border-black text-black hover:bg-red-300 font-black tracking-widest uppercase">-{gameState.riskBets[record.pid]}</button>
+                      <button onClick={() => handleScore(record.pid, gameState.riskBets[record.pid])} className="px-3 py-1 text-xs bg-emerald-400 border-2 border-black text-black hover:bg-emerald-300 font-black tracking-widest uppercase">+{gameState.riskBets[record.pid]}</button>
+                      <button onClick={() => handleScore(record.pid, -gameState.riskBets[record.pid])} className="px-3 py-1 text-xs bg-red-400 border-2 border-black text-black hover:bg-red-300 font-black tracking-widest uppercase">-{gameState.riskBets[record.pid]}</button>
                     </>
                   ) : (
                     <>
-                      <button onClick={() => handleScore(record.pid, pts)} className="px-4 py-2 bg-emerald-400 border-2 border-black text-black hover:bg-emerald-300 font-black tracking-widest uppercase">+{pts}</button>
-                      <button onClick={() => handleScore(record.pid, -pts)} className="px-4 py-2 bg-red-400 border-2 border-black text-black hover:bg-red-300 font-black tracking-widest uppercase">-{pts}</button>
+                      <button onClick={() => handleScore(record.pid, pts)} className="px-3 py-1 text-xs bg-emerald-400 border-2 border-black text-black hover:bg-emerald-300 font-black tracking-widest uppercase">+{pts}</button>
+                      <button onClick={() => handleScore(record.pid, -pts)} className="px-3 py-1 text-xs bg-red-400 border-2 border-black text-black hover:bg-red-300 font-black tracking-widest uppercase">-{pts}</button>
                     </>
                   )}
-                  <button onClick={() => handleRemoveBuzz(record.pid)} className="p-2 ml-4 text-white bg-black hover:bg-zinc-800 brutal-border transition-colors"><X size={20}/></button>
+                  <button onClick={() => handleRemoveBuzz(record.pid)} className="p-1 ml-2 text-white bg-black hover:bg-zinc-800 brutal-border transition-colors"><X size={16}/></button>
                 </div>
               </motion.div>
             );
           })}
-          {gameState.buzzRecords.length === 0 && <p className="text-zinc-500 font-black tracking-tighter italic text-center py-8 text-2xl">AWAITING INPUT...</p>}
+          {gameState.buzzRecords.length === 0 && <p className="text-zinc-500 font-black tracking-tighter italic text-center py-4 text-lg">AWAITING INPUT...</p>}
         </AnimatePresence>
       </div>
     );
   };
 
   return (
-    <div className="min-h-screen bg-yellow-400 text-black flex flex-col md:flex-row selection:bg-white font-sans">
-      <div className="w-full md:w-96 bg-white brutal-border brutal-shadow m-6 md:mr-0 flex flex-col items-stretch">
-        <div className="p-8 pb-4 border-b-4 border-black bg-black text-white">
-          <h2 className="text-3xl font-black italic tracking-tighter uppercase mb-6 flex items-center gap-3">
-            <Settings2 size={32} /> SYS CONTROL
+    <div className="min-h-screen bg-yellow-400 text-black flex flex-col md:flex-row selection:bg-white font-sans relative">
+      {showProfiles && <ProfilesManagement onClose={() => setShowProfiles(false)} />}
+      <div className="w-full md:w-80 bg-white brutal-border brutal-shadow m-4 md:mr-0 flex flex-col items-stretch">
+        <div className="p-4 border-b-4 border-black bg-black text-white">
+          <h2 className="text-xl font-black italic tracking-tighter uppercase mb-4 flex items-center gap-2">
+            <Settings2 size={24} /> SYS CONTROL
           </h2>
           
-          <div className="grid grid-cols-2 gap-4 mb-6">
+          <div className="grid grid-cols-2 gap-2 mb-4">
             <button 
               onClick={gameState.buzzLocked ? handleUnlock : handleLock}
               className={clsx(
-                "flex items-center justify-center gap-2 py-4 font-black uppercase tracking-widest transition-colors brutal-border",
+                "flex items-center justify-center gap-1 py-2 text-xs font-black uppercase tracking-widest transition-colors brutal-border",
                 gameState.buzzLocked 
-                  ? "bg-red-500 text-black shadow-[4px_4px_0_0_#000] active:translate-y-1 active:shadow-none hover:bg-red-400" 
-                  : "bg-emerald-400 text-black shadow-[4px_4px_0_0_#000] active:translate-y-1 active:shadow-none hover:bg-emerald-300"
+                  ? "bg-red-500 text-black shadow-[2px_2px_0_0_#000] active:translate-y-px active:shadow-none hover:bg-red-400" 
+                  : "bg-emerald-400 text-black shadow-[2px_2px_0_0_#000] active:translate-y-px active:shadow-none hover:bg-emerald-300"
               )}
             >
-              {gameState.buzzLocked ? <Lock size={20} /> : <Unlock size={20} />}
+              {gameState.buzzLocked ? <Lock size={14} /> : <Unlock size={14} />}
               {gameState.buzzLocked ? "LOCKED" : "OPEN"}
             </button>
             <button 
                onClick={() => { socket.emit("reset_scores") }}
-               className="flex items-center justify-center gap-2 py-4 bg-white text-black font-black uppercase tracking-widest brutal-border shadow-[4px_4px_0_0_#000] active:translate-y-1 active:shadow-none hover:bg-zinc-100 transition-colors"
+               className="flex items-center justify-center gap-1 py-2 text-xs bg-white text-black font-black uppercase tracking-widest brutal-border shadow-[2px_2px_0_0_#000] active:translate-y-px active:shadow-none hover:bg-zinc-100 transition-colors"
             >
-              <RefreshCw size={20} /> RESET
+              <RefreshCw size={14} /> RESET POINTS
             </button>
             <button 
                onClick={() => { socket.emit("double_points") }}
                className={clsx(
-                 "flex items-center justify-center gap-2 py-4 font-black uppercase tracking-widest transition-colors brutal-border shadow-[4px_4px_0_0_#000] active:translate-y-1 active:shadow-none",
+                 "flex items-center justify-center gap-1 py-2 text-xs font-black uppercase tracking-widest transition-colors brutal-border shadow-[2px_2px_0_0_#000] active:translate-y-px active:shadow-none",
                  gameState.doublePointsActive ? "bg-purple-400 hover:bg-purple-300 text-black" : "bg-white hover:bg-zinc-100 text-black"
                )}
             >
@@ -228,40 +257,46 @@ export default function HostView() {
             </button>
             <button 
                onClick={() => { socket.emit("random_player") }}
-               className="flex items-center justify-center gap-2 py-4 bg-yellow-400 text-black font-black uppercase tracking-widest brutal-border shadow-[4px_4px_0_0_#000] active:translate-y-1 active:shadow-none hover:bg-yellow-300 transition-colors"
+               className="flex items-center justify-center gap-1 py-2 text-xs bg-yellow-400 text-black font-black uppercase tracking-widest brutal-border shadow-[2px_2px_0_0_#000] active:translate-y-px active:shadow-none hover:bg-yellow-300 transition-colors"
             >
               RANDOM
             </button>
             <button 
                onClick={() => { socket.emit("show_standings") }}
-               className="flex items-center justify-center gap-2 py-4 bg-blue-400 text-black font-black uppercase tracking-widest brutal-border shadow-[4px_4px_0_0_#000] active:translate-y-1 active:shadow-none hover:bg-blue-300 transition-colors"
+               className="flex items-center justify-center gap-1 py-2 text-xs bg-blue-400 text-black font-black uppercase tracking-widest brutal-border shadow-[2px_2px_0_0_#000] active:translate-y-px active:shadow-none hover:bg-blue-300 transition-colors"
             >
               STANDINGS
             </button>
             <button 
+               onClick={() => { setShowProfiles(true) }}
+               className="flex items-center justify-center gap-1 py-2 text-xs bg-purple-400 text-black font-black uppercase tracking-widest brutal-border shadow-[2px_2px_0_0_#000] active:translate-y-px active:shadow-none hover:bg-purple-300 transition-colors"
+            >
+              PROFILES
+            </button>
+            <button 
                onClick={() => { socket.emit("end_game") }}
-               className="flex items-center justify-center gap-2 py-4 bg-red-600 text-white font-black uppercase tracking-widest brutal-border shadow-[4px_4px_0_0_#000] active:translate-y-1 active:shadow-none hover:bg-red-500 transition-colors"
+               className="flex items-center justify-center gap-1 py-2 text-xs bg-red-600 text-white font-black uppercase tracking-widest brutal-border shadow-[2px_2px_0_0_#000] active:translate-y-px active:shadow-none hover:bg-red-500 transition-colors"
             >
               END GAME
             </button>
             {gameState.board && gameState.board.finalRound && (
                <button 
                   onClick={() => socket.emit("start_final_round")}
-                  className="col-span-2 flex items-center justify-center gap-2 py-4 bg-black text-white font-black uppercase tracking-widest brutal-border shadow-[4px_4px_0_0_#eab308] active:translate-y-1 active:shadow-none hover:bg-zinc-800 transition-colors"
+                  className="col-span-2 flex items-center justify-center gap-1 py-2 text-xs bg-black text-white font-black uppercase tracking-widest brutal-border shadow-[2px_2px_0_0_#eab308] active:translate-y-px active:shadow-none hover:bg-zinc-800 transition-colors"
                >
-                 <Play size={20} /> START FINAL ROUND
+                 <Play size={14} /> START FINAL ROUND
                </button>
             )}
           </div>
           
-          <h3 className="text-lg uppercase font-black text-zinc-400 tracking-widest mb-2">Connected Nodes</h3>
+          <h3 className="text-xs uppercase font-black text-zinc-400 tracking-widest mb-1">Connected Nodes</h3>
         </div>
-        <div className="flex-1 overflow-y-auto px-6 py-6 bg-zinc-50">
+        <div className="flex-1 overflow-y-auto px-4 py-4 bg-zinc-50 space-y-3">
            {gameState.showStandings && gameState.standingsLeaderboard && (
-             <div className="bg-blue-200 brutal-border brutal-shadow-sm p-4 mb-6">
-               <h3 className="text-xl font-black uppercase italic mb-2">Current Standings</h3>
+             <div className="bg-blue-200 brutal-border brutal-shadow-sm p-3 mb-2">
+               <h3 className="text-sm font-black uppercase italic mb-2">Current Standings</h3>
                {gameState.standingsLeaderboard.map((entry: any, i: number) => (
-                 <div key={entry.player_id} className="flex justify-between font-bold">
+                 <div key={entry.player_id} className="flex justify-between font-bold text-xs">
                    <span>{i+1}. {entry.player_name}</span>
                    <span>{entry.score}</span>
                  </div>
@@ -269,10 +304,10 @@ export default function HostView() {
              </div>
            )}
            {gameState.showGameOver && gameState.gameOverLeaderboard && (
-             <div className="bg-red-200 brutal-border brutal-shadow-sm p-4 mb-6">
-               <h3 className="text-2xl font-black uppercase italic mb-2 text-red-600">Game Over</h3>
+             <div className="bg-red-200 brutal-border brutal-shadow-sm p-3 mb-2">
+               <h3 className="text-lg font-black uppercase italic mb-2 text-red-600">Game Over</h3>
                {gameState.gameOverLeaderboard.map((entry: any, i: number) => (
-                 <div key={entry.player_id} className="flex justify-between font-bold text-xl text-black">
+                 <div key={entry.player_id} className="flex justify-between font-bold text-sm text-black">
                    <span>{i+1}. {entry.player_name}</span>
                    <span>{entry.score}</span>
                  </div>
@@ -280,36 +315,48 @@ export default function HostView() {
              </div>
            )}
            {Object.values(gameState.players).map((p: any) => (
-             <div key={p.id} className="bg-white brutal-border brutal-shadow-sm p-4 flex flex-col mb-6">
-               <div className="flex justify-between items-center mb-4">
-                 <div className="flex items-center gap-3">
-                   <div className={clsx("w-4 h-4 brutal-border", p.status === "online" ? "bg-emerald-400" : "bg-red-500")}></div>
-                   <span className="font-black text-xl uppercase tracking-tighter">{p.name}</span>
+             <div key={p.id} className="bg-white brutal-border brutal-shadow-sm p-2 flex flex-col">
+               <div className="flex justify-between items-center mb-2">
+                 <div className="flex items-center gap-2">
+                   <div className={clsx("w-3 h-3 brutal-border", p.status === "online" ? "bg-emerald-400" : "bg-red-500")}></div>
+                   <span className="font-black text-sm uppercase tracking-tighter truncate max-w-[120px]" title={p.name}>{p.name}</span>
                  </div>
-                 <div className="flex items-center gap-4">
-                   <span className="font-black text-2xl tracking-tighter">{gameState.scoreboard[p.id] || 0}</span>
-                   <button onClick={() => socket.emit("remove_player", { player_id: p.id })} className="text-red-600 bg-red-100 p-1 hover:bg-red-200 brutal-border"><X size={16}/></button>
+                 <div className="flex items-center gap-2">
+                   <span className="font-black text-lg tracking-tighter">{gameState.scoreboard[p.id] || 0}</span>
+                   <button onClick={() => socket.emit("remove_player", { player_id: p.id })} className="text-red-600 bg-red-100 p-1 hover:bg-red-200 brutal-border"><X size={12}/></button>
                  </div>
                </div>
-               <div className="flex justify-end gap-2 mt-2 border-t-4 border-black pt-4">
-                  <button onClick={() => handleScore(p.id, gameState.doublePointsActive ? 1000 : 500)} className="flex-1 py-2 text-sm font-black tracking-widest uppercase bg-emerald-400 brutal-border hover:bg-emerald-300 transition-colors active:translate-y-1">+{gameState.doublePointsActive ? 1000 : 500}</button>
-                  <button onClick={() => handleScore(p.id, gameState.doublePointsActive ? -1000 : -500)} className="flex-1 py-2 text-sm font-black tracking-widest uppercase bg-red-400 brutal-border hover:bg-red-300 transition-colors active:translate-y-1">{gameState.doublePointsActive ? -1000 : -500}</button>
+               <div className="flex flex-col gap-1 mt-1 border-t-2 border-black pt-2">
+                 <div className="flex w-full gap-1">
+                   {[100, 200, 300, 400, 500].map(val => (
+                     <button key={`plus-${val}`} onClick={() => handleScore(p.id, gameState.doublePointsActive ? val * 2 : val)} className="flex-1 py-1 px-0.5 text-[10px] sm:text-xs font-black tracking-tighter uppercase bg-emerald-400 brutal-border hover:bg-emerald-300 transition-colors active:translate-y-px">
+                       +{gameState.doublePointsActive ? val * 2 : val}
+                     </button>
+                   ))}
+                 </div>
+                 <div className="flex w-full gap-1">
+                   {[100, 200, 300, 400, 500].map(val => (
+                     <button key={`minus-${val}`} onClick={() => handleScore(p.id, gameState.doublePointsActive ? -val * 2 : -val)} className="flex-1 py-1 px-0.5 text-[10px] sm:text-xs font-black tracking-tighter uppercase bg-red-400 brutal-border hover:bg-red-300 transition-colors active:translate-y-px">
+                       {gameState.doublePointsActive ? -val * 2 : -val}
+                     </button>
+                   ))}
+                 </div>
                </div>
              </div>
            ))}
         </div>
       </div>
 
-      <div className="flex-1 p-6 flex flex-col overflow-y-auto max-h-screen">
-         <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 pb-6 border-b-4 border-black">
+      <div className="flex-1 p-4 md:p-6 flex flex-col overflow-y-auto max-h-screen">
+         <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-4 pb-4 border-b-4 border-black">
            <div>
-             <span className="text-xs font-black uppercase opacity-60 mb-1 tracking-widest block">Dashboard</span>
-             <h1 className="text-5xl font-black uppercase italic tracking-tighter">Activity</h1>
+             <span className="text-[10px] font-black uppercase opacity-60 mb-1 tracking-widest block">Dashboard</span>
+             <h1 className="text-3xl sm:text-4xl font-black uppercase italic tracking-tighter">Activity</h1>
            </div>
            <div>
               <button 
                 onClick={() => navigate("/board-editor")}
-                className="bg-black text-white brutal-border brutal-shadow hover:bg-zinc-800 px-8 py-4 text-sm font-black uppercase tracking-widest active:translate-y-1 transition-all mt-4 md:mt-0"
+                className="bg-black text-white brutal-border brutal-shadow hover:bg-zinc-800 px-6 py-3 text-xs font-black uppercase tracking-widest active:translate-y-1 transition-all mt-4 md:mt-0"
               >
                 Access Editor →
               </button>
@@ -338,104 +385,123 @@ export default function HostView() {
                    </div>
                 </div>
              ) : (
-                <JeopardyBoard gameState={gameState} isHost={true} />
-             )}
+                <div className="flex flex-col xl:flex-row gap-6 w-full items-start">
+                  <div className="flex flex-col gap-6 w-full xl:w-1/2">
+                    <div className="bg-white brutal-border brutal-shadow p-6 flex flex-col md:flex-row items-center gap-4 justify-between -mb-4 relative z-10 mx-6">
+                      <span className="font-black uppercase tracking-widest text-zinc-500">Board Navigator</span>
+                      <select
+                        value={gameState.boardSelector || ""}
+                        onChange={(e) => socket.emit("board_set_selector", { player_id: e.target.value })}
+                        className="bg-yellow-100 border-2 border-black px-4 py-2 font-black uppercase"
+                      >
+                        <option value="">-- Host Control --</option>
+                        {Object.values(gameState.players).map((p: any) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <JeopardyBoard gameState={gameState} isHost={true} />
+                  </div>
 
-            {gameState.boardCurrentTile ? (() => {
-              const [cIdx, tIdx] = gameState.boardCurrentTile;
-              const tile = gameState.board.categories[cIdx]?.tiles?.[tIdx];
-              if (!tile) return null;
-              
-              return (
-              <div className="bg-white brutal-border brutal-shadow p-8 mt-12 mb-6">
-                <div className="flex justify-between items-start mb-6">
-                  <h2 className="text-3xl font-black uppercase italic tracking-tighter">Mode: {tile.mode || 'buzzer'}</h2>
-                  <div className="text-right">
-                     <span className="font-black text-xl bg-yellow-400 px-4 py-1 brutal-border block mb-2">{tile.value} POINTS</span>
-                     {tile.double && <span className="font-black text-sm bg-purple-400 text-white px-2 py-1 brutal-border uppercase block mb-1">Double Trouble</span>}
-                     {tile.risk && <span className="font-black text-sm bg-red-600 text-white px-2 py-1 brutal-border uppercase block">Risk Wager</span>}
+                  <div className="w-full xl:w-1/2 flex flex-col gap-6">
+                    {gameState.boardCurrentTile ? (() => {
+                      const [cIdx, tIdx] = gameState.boardCurrentTile;
+                      const tile = gameState.board.categories[cIdx]?.tiles?.[tIdx];
+                      if (!tile) return null;
+                      
+                      return (
+                      <div className="bg-white brutal-border brutal-shadow p-6 mt-6">
+                        <div className="flex justify-between items-start mb-6">
+                          <h2 className="text-2xl font-black uppercase italic tracking-tighter">Mode: {tile.mode || 'buzzer'}</h2>
+                          <div className="text-right">
+                             <span className="font-black text-lg bg-yellow-400 px-3 py-1 brutal-border block mb-2">{tile.value} POINTS</span>
+                             {tile.double && <span className="font-black text-xs bg-purple-400 text-white px-2 py-1 brutal-border uppercase block mb-1">Double Trouble</span>}
+                             {tile.risk && <span className="font-black text-xs bg-red-600 text-white px-2 py-1 brutal-border uppercase block">Risk Wager</span>}
+                          </div>
+                        </div>
+
+                        <div className="bg-zinc-100 p-4 brutal-border mb-4">
+                          <h3 className="text-xs uppercase font-black tracking-widest opacity-50 mb-2">Prompt</h3>
+                          <p className="text-xl font-bold">{tile.question?.content || 'No text content'}</p>
+                          {tile.mode === 'choice' && tile.choices && (
+                            <div className="grid grid-cols-2 gap-4 mt-4">
+                              {tile.choices.map((c: string, i: number) => (
+                                <div key={i} className="bg-white p-2 brutal-border font-bold text-sm">
+                                  {["A", "B", "C", "D"][i]}: {c}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="bg-zinc-100 p-4 brutal-border">
+                          <h3 className="text-xs uppercase font-black tracking-widest opacity-50 mb-2 border-b-2 border-zinc-200 pb-2">Admin Answer (Hidden)</h3>
+                          {tile.answer?.content && <p className="text-lg font-bold text-emerald-700">{tile.answer.content}</p>}
+                          {tile.mode === 'choice' && tile.correctIndex !== undefined && (
+                            <p className="text-lg font-bold text-emerald-700">Correct Choice: {["A", "B", "C", "D"][tile.correctIndex]}</p>
+                          )}
+                          {tile.mode === 'guess' && tile.correctValue !== undefined && (
+                            <p className="text-lg font-bold text-emerald-700">Exact Value: {tile.correctValue}</p>
+                          )}
+                        </div>
+                        
+                        <div className="flex flex-wrap gap-4 mt-6 border-t-4 border-black pt-6">
+                          {!gameState.boardOpen && (
+                            <button 
+                              disabled={tile.risk && !gameState.betsConfirmed}
+                              onClick={() => socket.emit("board_show_question")}
+                              className="bg-blue-400 disabled:bg-zinc-300 disabled:text-zinc-500 text-black brutal-border hover:brutal-shadow-sm px-6 py-3 font-black uppercase tracking-widest active:translate-y-px transition-all shadow-[2px_2px_0_0_#000]"
+                            >
+                              Reveal Prompt
+                            </button>
+                          )}
+                          {tile.risk && !gameState.boardOpen && !gameState.betsConfirmed && (
+                            <button 
+                              onClick={() => socket.emit("confirm_bets")}
+                              className="bg-red-500 text-white brutal-border hover:brutal-shadow-sm px-6 py-3 font-black uppercase tracking-widest active:translate-y-px transition-all shadow-[2px_2px_0_0_#000]"
+                            >
+                              Confirm Wagers
+                            </button>
+                          )}
+                          {gameState.boardOpen && (
+                            <button 
+                              onClick={() => socket.emit("board_reveal_answer")}
+                              className="bg-emerald-400 text-black brutal-border hover:brutal-shadow-sm px-6 py-3 font-black uppercase tracking-widest active:translate-y-px transition-all shadow-[2px_2px_0_0_#000]"
+                            >
+                              Reveal Answer & Complete
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      );
+                    })() : (
+                       <div className="bg-white brutal-border brutal-shadow p-8 text-center text-black flex flex-col items-center justify-center mt-6">
+                         <Trello size={60} className="mb-4 opacity-20" />
+                         <p className="text-2xl font-black uppercase italic tracking-tighter">Idle State</p>
+                         <p className="text-xs font-black uppercase tracking-widest max-w-sm mt-2 opacity-60">Initialize board via editor to begin.</p>
+                       </div>
+                    )}
+                    
+                    {gameState.boardRiskActive && !gameState.boardOpen && (
+                      <div className="bg-red-100 brutal-border brutal-shadow p-4 mb-4">
+                        <h3 className="text-xs uppercase font-black text-red-600 mb-4 tracking-widest block border-b-4 border-red-600 pb-2">RISK WAGERS</h3>
+                        {Object.entries(gameState.riskBets || {}).map(([pid, bet]) => {
+                          const p = gameState.players[pid];
+                          if (!p) return null;
+                          return (
+                            <div key={pid} className="flex justify-between items-center text-sm font-bold">
+                               <span>{p.name}</span>
+                               <span className="text-red-600">{Number(bet)}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    
+                    {renderBuzzList()}
                   </div>
                 </div>
-
-                <div className="bg-zinc-100 p-6 brutal-border mb-6">
-                  <h3 className="text-sm uppercase font-black tracking-widest opacity-50 mb-2">Prompt</h3>
-                  <p className="text-2xl font-bold">{tile.question?.content || 'No text content'}</p>
-                  {tile.mode === 'choice' && tile.choices && (
-                    <div className="grid grid-cols-2 gap-4 mt-4">
-                      {tile.choices.map((c: string, i: number) => (
-                        <div key={i} className="bg-white p-3 brutal-border font-bold">
-                          {["A", "B", "C", "D"][i]}: {c}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div className="bg-zinc-100 p-6 brutal-border">
-                  <h3 className="text-sm uppercase font-black tracking-widest opacity-50 mb-2 border-b-2 border-zinc-200 pb-2">Admin Answer (Hidden)</h3>
-                  {tile.answer?.content && <p className="text-xl font-bold text-emerald-700">{tile.answer.content}</p>}
-                  {tile.mode === 'choice' && tile.correctIndex !== undefined && (
-                    <p className="text-xl font-bold text-emerald-700">Correct Choice: {["A", "B", "C", "D"][tile.correctIndex]}</p>
-                  )}
-                  {tile.mode === 'guess' && tile.correctValue !== undefined && (
-                    <p className="text-xl font-bold text-emerald-700">Exact Value: {tile.correctValue}</p>
-                  )}
-                </div>
-                
-                <div className="flex flex-wrap gap-4 mt-8 border-t-4 border-black pt-8">
-                   {!gameState.boardOpen && (
-                     <button 
-                       disabled={tile.risk && !gameState.betsConfirmed}
-                       onClick={() => socket.emit("board_show_question")}
-                       className="bg-blue-400 disabled:bg-zinc-300 disabled:text-zinc-500 text-black brutal-border hover:brutal-shadow px-8 py-4 font-black uppercase tracking-widest active:translate-y-1 transition-all shadow-[4px_4px_0_0_#000]"
-                     >
-                       Reveal Prompt
-                     </button>
-                   )}
-                   {tile.risk && !gameState.boardOpen && !gameState.betsConfirmed && (
-                     <button 
-                       onClick={() => socket.emit("confirm_bets")}
-                       className="bg-red-500 text-white brutal-border hover:brutal-shadow px-8 py-4 font-black uppercase tracking-widest active:translate-y-1 transition-all shadow-[4px_4px_0_0_#000]"
-                     >
-                       Confirm Wagers
-                     </button>
-                   )}
-                   {gameState.boardOpen && (
-                     <button 
-                       onClick={() => socket.emit("board_reveal_answer")}
-                       className="bg-emerald-400 text-black brutal-border hover:brutal-shadow px-8 py-4 font-black uppercase tracking-widest active:translate-y-1 transition-all shadow-[4px_4px_0_0_#000]"
-                     >
-                       Reveal Answer & Complete
-                     </button>
-                   )}
-                </div>
-              </div>
-              );
-            })() : (
-               <div className="bg-white brutal-border brutal-shadow p-12 text-center text-black flex flex-col items-center justify-center mt-12">
-                 <Trello size={80} className="mb-6 opacity-20" />
-                 <p className="text-4xl font-black uppercase italic tracking-tighter">Idle State</p>
-                 <p className="text-sm font-black uppercase tracking-widest max-w-sm mt-4 opacity-60">Initialize board via editor to begin.</p>
-               </div>
-            )}
-            
-            {gameState.boardRiskActive && !gameState.boardOpen && (
-              <div className="bg-red-100 brutal-border brutal-shadow p-6 mt-12 mb-6">
-                <h3 className="text-sm uppercase font-black text-red-600 mb-6 tracking-widest block border-b-4 border-red-600 pb-2">RISK WAGERS</h3>
-                {Object.entries(gameState.riskBets || {}).map(([pid, bet]) => {
-                  const p = gameState.players[pid];
-                  if (!p) return null;
-                  return (
-                    <div key={pid} className="flex justify-between items-center text-lg font-bold">
-                       <span>{p.name}</span>
-                       <span className="text-red-600">{Number(bet)}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            
-            {renderBuzzList()}
+             )}
          </div>
       </div>
     </div>
