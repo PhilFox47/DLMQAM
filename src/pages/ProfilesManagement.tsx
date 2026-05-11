@@ -26,6 +26,13 @@ export default function ProfilesManagement({ onClose }: { onClose?: () => void }
     });
   };
 
+  const handleDeleteProfile = (name: string) => {
+    if (confirm(`Are you sure you want to delete profile '${name}'?`)) {
+      fetch(`/api/profiles/${encodeURIComponent(name)}`, { method: "DELETE" })
+        .then(() => fetchProfiles());
+    }
+  };
+
   return (
     <div className="fixed inset-0 min-h-screen bg-yellow-400 p-8 md:p-16 text-black selection:bg-white font-sans relative z-50 overflow-y-auto w-full h-full">
       {editingProfile && (
@@ -44,8 +51,11 @@ export default function ProfilesManagement({ onClose }: { onClose?: () => void }
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-8">
           {profiles.map(p => (
-            <div key={p.name} className="bg-white brutal-border brutal-shadow p-6 flex flex-col hover:-translate-y-2 hover:shadow-[12px_12px_0_0_#000] transition-all relative">
-              <button onClick={() => setEditingProfile(p)} className="absolute top-2 right-2 text-xs font-black uppercase tracking-widest bg-yellow-400 px-2 py-1 brutal-border hover:bg-yellow-300">Edit</button>
+            <div key={p.name} className="bg-white brutal-border brutal-shadow p-6 flex flex-col hover:-translate-y-2 hover:shadow-[12px_12px_0_0_#000] transition-all relative group">
+              <div className="absolute top-2 right-2 flex gap-2">
+                <button onClick={() => setEditingProfile(p)} className="text-xs font-black uppercase tracking-widest bg-yellow-400 px-2 py-1 brutal-border hover:bg-yellow-300">Edit</button>
+                <button onClick={() => handleDeleteProfile(p.name)} className="text-xs font-black uppercase tracking-widest bg-red-400 text-white px-2 py-1 brutal-border hover:bg-red-500 opacity-0 group-hover:opacity-100 transition-opacity">Delete</button>
+              </div>
               {p.avatar ? (
                 <img src={p.avatar} alt={p.name} className="w-24 h-24 brutal-border mb-6 self-start bg-emerald-200 object-cover" />
               ) : (

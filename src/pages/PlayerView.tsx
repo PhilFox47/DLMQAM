@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { socket } from "../lib/socket";
 import JeopardyBoard from "./JeopardyBoard";
-import { Edit2 } from "lucide-react";
+import { Edit2, HelpCircle, X } from "lucide-react";
 import ProfileEditor from "../components/ProfileEditor";
 
 export default function PlayerView() {
@@ -15,6 +15,7 @@ export default function PlayerView() {
   const [myProfile, setMyProfile] = useState<any>(null);
   const [allProfiles, setAllProfiles] = useState<Record<string, any>>({});
   const [showProfileEditor, setShowProfileEditor] = useState(false);
+  const [showHelpModal, setShowHelpModal] = useState(false);
   const [buzzed, setBuzzed] = useState(false);
   const [answerContent, setAnswerContent] = useState("");
   const [riskBet, setRiskBet] = useState(0);
@@ -163,7 +164,7 @@ export default function PlayerView() {
     });
 
     socket.on("registered", (data) => {
-      if (data.profile) setMyProfile(data.profile);
+      if (data.profile) setMyProfile({ ...data.profile, name });
       if (data.profile?.buzzer) {
         buzzerSoundRef.current = new Audio(data.profile.buzzer);
         buzzerSoundRef.current.load();
@@ -232,15 +233,25 @@ export default function PlayerView() {
     });
 
     socket.on("board_answer", (data) => {
-      setGameState(s => ({ 
-        ...s, 
-        boardRevealed: data.revealed, 
-        boardPlayedValues: data.playedValues || s.boardPlayedValues || {},
-        boardCurrentTile: null, 
-        boardOpen: false, 
-        boardRiskActive: false,
-        questionMode: null
-      }));
+      setGameState(s => {
+        if (s.questionMode === "choice" || s.questionMode === "multiple_choice") {
+          const myRecord = s.buzzRecords?.find((r: any) => r.pid === socket.id);
+          if (myRecord) {
+            if (!data.winners.includes(socket.id)) {
+              playSadSound();
+            }
+          }
+        }
+        return { 
+          ...s, 
+          boardRevealed: data.revealed, 
+          boardPlayedValues: data.playedValues || s.boardPlayedValues || {},
+          boardCurrentTile: null, 
+          boardOpen: false, 
+          boardRiskActive: false,
+          questionMode: null
+        };
+      });
       setBuzzed(false);
     });
 
@@ -375,11 +386,17 @@ export default function PlayerView() {
           <div className="flex flex-col gap-6 w-full max-w-md mx-auto bg-white brutal-border brutal-shadow p-8">
             <p className="text-sm font-black uppercase tracking-widest text-zinc-500 mb-2">Configure Risk Wager</p>
             <input 
-              type="number" 
-              min="0"
-              max={Math.max(myScore, 500)}
-              value={riskBet}
-              onChange={e => setRiskBet(parseInt(e.target.value) || 0)}
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={riskBet || ''}
+              onChange={e => {
+                const val = e.target.value.replace(/[^0-9]/g, '');
+                let parsed = val ? parseInt(val) : 0;
+                let maxBet = Math.max(myScore, 500);
+                if (parsed > maxBet) parsed = maxBet;
+                setRiskBet(parsed);
+              }}
               className="w-full px-6 py-4 bg-yellow-100 brutal-border text-black font-black text-3xl text-center focus:outline-none focus:bg-yellow-200 uppercase tracking-tighter"
               placeholder="AMOUNT"
             />
@@ -420,6 +437,9 @@ export default function PlayerView() {
                <div className="bg-white brutal-border brutal-shadow text-black p-6 w-full text-left">
                   <span className="opacity-50 text-xs font-black uppercase tracking-widest block mb-2">Prompt</span>
                   <p className="text-2xl font-black">{currentTile.question.content}</p>
+                  {currentTile.question.src && (
+                     <img src={currentTile.question.src} alt="Question graphic" className="mt-4 max-h-64 object-contain mx-auto" />
+                  )}
                </div>
             )}
           </div>
@@ -430,9 +450,17 @@ export default function PlayerView() {
           <div className="flex flex-col gap-6 w-full max-w-md mx-auto bg-white brutal-border brutal-shadow p-8 mt-8">
             <p className="text-sm font-black uppercase tracking-widest text-zinc-500 mb-2">Input Query Terminal</p>
             <input 
-               type={gameState.questionMode === "guess" ? "number" : "text"}
+               type="text"
+               inputMode={gameState.questionMode === "guess" ? "numeric" : "text"}
+               pattern={gameState.questionMode === "guess" ? "[0-9]*" : undefined}
                value={answerContent}
-               onChange={e => setAnswerContent(e.target.value)}
+               onChange={e => {
+                  let val = e.target.value;
+                  if (gameState.questionMode === "guess") {
+                     val = val.replace(/[^0-9]/g, '');
+                  }
+                  setAnswerContent(val);
+               }}
                placeholder={gameState.questionMode === "guess" ? "0000" : "QUERY"}
                className="w-full px-6 py-4 bg-yellow-100 brutal-border text-black font-black text-3xl text-center focus:outline-none focus:bg-yellow-200 uppercase tracking-tighter"
             />
@@ -446,6 +474,9 @@ export default function PlayerView() {
             {currentTile && currentTile.question && gameState.boardOpen && (
                <div className="text-left mt-4 pt-4 border-t-4 border-black">
                   <p className="text-xl font-black uppercase italic">{currentTile.question.content}</p>
+                  {currentTile.question.src && (
+                     <img src={currentTile.question.src} alt="Question graphic" className="mt-4 max-h-64 object-contain mx-auto" />
+                  )}
                </div>
             )}
           </div>
@@ -457,6 +488,9 @@ export default function PlayerView() {
             {currentTile && currentTile.question && gameState.boardOpen && (
                <div className="bg-white brutal-border brutal-shadow text-black p-6 w-full max-w-2xl text-left">
                   <p className="text-2xl font-black uppercase italic">{currentTile.question.content}</p>
+                  {currentTile.question.src && (
+                     <img src={currentTile.question.src} alt="Question graphic" className="mt-4 max-h-64 object-contain mx-auto" />
+                  )}
                </div>
             )}
             <button 
@@ -516,24 +550,140 @@ export default function PlayerView() {
           onSave={handleSaveProfile}
         />
       )}
-      <div className="flex items-center justify-between bg-white brutal-border brutal-shadow px-6 py-4 mb-6 relative group cursor-pointer" onClick={() => setShowProfileEditor(true)}>
-        <div className="flex items-center gap-6">
-          <div className="relative">
-            {myProfile?.avatar ? (
-              <img src={myProfile.avatar} alt="Avatar" className="w-16 h-16 brutal-border bg-emerald-200 object-cover" />
-            ) : (
-              <div className="w-16 h-16 brutal-border bg-zinc-200 flex items-center justify-center text-3xl font-black text-black">?</div>
-            )}
-            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
-              <Edit2 size={24}/>
+      <AnimatePresence>
+        {showHelpModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-yellow-400 z-50 overflow-y-auto p-4 sm:p-8"
+          >
+            <div className="bg-white brutal-border brutal-shadow p-6 sm:p-10 max-w-4xl mx-auto border-8 border-black relative mb-12">
+              <button 
+                onClick={() => setShowHelpModal(false)}
+                className="absolute top-4 right-4 bg-red-400 text-white p-2 brutal-border hover:bg-red-500 hover:-translate-y-1 transition-all"
+              >
+                <X size={24} />
+              </button>
+              
+              <h1 className="text-4xl sm:text-6xl font-black uppercase italic tracking-tighter mb-8 bg-black text-yellow-400 p-4 inline-block transform -rotate-1">
+                Tutorial
+              </h1>
+              
+              <div className="space-y-8 text-black">
+                <section className="bg-zinc-100 p-6 brutal-border">
+                  <h2 className="text-2xl font-black uppercase tracking-widest mb-4 border-b-4 border-black pb-2">Welcome to DLMQAM</h2>
+                  <p className="font-bold text-lg leading-relaxed">
+                    Das lustige Mittwochsquiz am Mittwoch (The Funny Wednesday Quiz on Wednesday)
+                  </p>
+                  <p className="text-lg leading-relaxed mt-2">
+                    Every Wednesday, the CS DACH Team meets up to conquer one of my quizzes. It's nice to have you on board!
+                  </p>
+                </section>
+
+                <section>
+                  <h2 className="text-3xl font-black uppercase tracking-tighter mb-6 flex items-center gap-4">
+                    <span className="bg-black text-white px-4 py-2">4</span>
+                    Question Types
+                  </h2>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="bg-blue-100 p-6 brutal-border relative group hover:-translate-y-1 transition-transform">
+                      <div className="absolute -top-3 -left-3 bg-black text-white text-xs font-black px-2 py-1 uppercase tracking-widest transform -rotate-6">Type 1</div>
+                      <h3 className="text-xl font-black uppercase tracking-widest mb-2 mt-2">Multiple Choice</h3>
+                      <p className="font-medium">Easy and Straightforward. I ask a question, you pick one of four answers. Get it right, you get points! Get it wrong, and you'll lose some points instead. If you do not submit an answer, you keep your current score.</p>
+                    </div>
+                    
+                    <div className="bg-pink-100 p-6 brutal-border relative group hover:-translate-y-1 transition-transform">
+                      <div className="absolute -top-3 -left-3 bg-black text-white text-xs font-black px-2 py-1 uppercase tracking-widest transform -rotate-6">Type 2</div>
+                      <h3 className="text-xl font-black uppercase tracking-widest mb-2 mt-2">Guessing Question</h3>
+                      <p className="font-medium">I am looking for a number. Closest player(s) to correct number wins the points! (All others keep their current score) It's risk free!</p>
+                    </div>
+
+                    <div className="bg-emerald-100 p-6 brutal-border relative group hover:-translate-y-1 transition-transform">
+                      <div className="absolute -top-3 -left-3 bg-black text-white text-xs font-black px-2 py-1 uppercase tracking-widest transform -rotate-6">Type 3</div>
+                      <h3 className="text-xl font-black uppercase tracking-widest mb-2 mt-2">Text Question</h3>
+                      <p className="font-medium">I ask you a question and you have to type in your answer yourself. If I deem the answer correct, you get some points. No points lost if you get it wrong!</p>
+                    </div>
+
+                    <div className="bg-amber-100 p-6 brutal-border relative group hover:-translate-y-1 transition-transform">
+                      <div className="absolute -top-3 -left-3 bg-black text-white text-xs font-black px-2 py-1 uppercase tracking-widest transform -rotate-6">Type 4</div>
+                      <h3 className="text-xl font-black uppercase tracking-widest mb-2 mt-2">Buzzer Question</h3>
+                      <p className="font-medium">Here you have to be fast! Who buzzes first has the right to answer the question. Get it right and you earn some points. Get it wrong and you'll lose those points.</p>
+                    </div>
+                  </div>
+                </section>
+
+                <section>
+                  <h2 className="text-3xl font-black uppercase tracking-tighter mb-6 flex items-center gap-4">
+                    <span className="bg-black text-white px-4 py-2">2</span>
+                    Modifiers
+                  </h2>
+                  <div className="space-y-4">
+                    <div className="bg-purple-100 p-6 brutal-border flex flex-col sm:flex-row gap-6 items-start sm:items-center hover:-translate-y-1 transition-transform">
+                      <div className="bg-white border-2 border-black p-3 font-black text-xl italic uppercase min-w-[200px] text-center">Double Trouble</div>
+                      <p className="font-medium">The Points for this questions are doubled (Double the reward, but also double the risk!)</p>
+                    </div>
+                    
+                    <div className="bg-red-100 p-6 brutal-border flex flex-col sm:flex-row gap-6 items-start sm:items-center hover:-translate-y-1 transition-transform">
+                      <div className="bg-white border-2 border-black p-3 font-black text-xl italic uppercase min-w-[200px] text-center">Risk Wager</div>
+                      <p className="font-medium">Risk some of your hard earned points. Any amount, it's up to you! Double your Wager if you get the next question right, lose your wager if you get it wrong.</p>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="bg-black text-yellow-500 p-8 brutal-border">
+                  <h2 className="text-3xl font-black uppercase tracking-widest mb-4 flex items-center gap-3">
+                    <span className="bg-yellow-500 text-black px-4 py-2">!</span>
+                    One more thing...
+                  </h2>
+                  <p className="text-xl font-bold leading-relaxed">
+                    At 17:20 all Point amounts will be doubled! So a 500 Point Question is now worth 1000 Points! 
+                    If there is a Category you think you might be good at, it could be a good idea to keep those questions for later...
+                  </p>
+                </section>
+
+                <div className="text-center pt-8">
+                  <button 
+                    onClick={() => setShowHelpModal(false)}
+                    className="bg-blue-400 text-white px-12 py-4 text-2xl font-black uppercase tracking-widest brutal-border brutal-shadow hover:bg-blue-500 hover:-translate-y-1 transition-all"
+                  >
+                    Got It!
+                  </button>
+                </div>
+              </div>
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="flex gap-4 items-stretch mb-6">
+        <div className="flex-1 flex items-center justify-between bg-white brutal-border brutal-shadow px-6 py-4 relative group cursor-pointer" onClick={() => setShowProfileEditor(true)}>
+          <div className="flex items-center gap-6">
+            <div className="relative">
+              {myProfile?.avatar ? (
+                <img src={myProfile.avatar} alt="Avatar" className="w-16 h-16 brutal-border bg-emerald-200 object-cover" />
+              ) : (
+                <div className="w-16 h-16 brutal-border bg-zinc-200 flex items-center justify-center text-3xl font-black text-black">?</div>
+              )}
+              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                <Edit2 size={24}/>
+              </div>
+            </div>
+            <h2 className="text-3xl font-black uppercase italic tracking-tighter">{myProfile?.name || name}</h2>
           </div>
-          <h2 className="text-3xl font-black uppercase italic tracking-tighter">{myProfile?.name || name}</h2>
+          <div className="text-right">
+            <p className="text-zinc-500 text-xs font-black uppercase tracking-widest mb-1">POINTS</p>
+            <p className="text-5xl font-black tracking-tighter">{myScore}</p>
+          </div>
         </div>
-        <div className="text-right">
-          <p className="text-zinc-500 text-xs font-black uppercase tracking-widest mb-1">CREDITS</p>
-          <p className="text-5xl font-black tracking-tighter">{myScore}</p>
-        </div>
+        <button 
+          onClick={() => setShowHelpModal(true)} 
+          className="bg-blue-200 text-blue-900 brutal-border brutal-shadow w-24 flex flex-col items-center justify-center gap-1 hover:bg-blue-300 hover:-translate-y-1 transition-all group"
+          title="Tutorial & Help"
+        >
+          <HelpCircle size={32} className="group-hover:scale-110 transition-transform" />
+          <span className="text-xs font-black uppercase tracking-widest">Help</span>
+        </button>
       </div>
 
       <div className="flex-1 flex flex-col xl:flex-row items-start gap-8 w-full">
@@ -541,7 +691,7 @@ export default function PlayerView() {
             <h3 className="text-sm font-black uppercase italic tracking-widest text-zinc-500 border-b-4 border-black pb-2 mb-2">Rankings</h3>
             {Object.values(gameState?.players || {}).sort((a: any, b: any) => (gameState.scoreboard?.[b.id] || 0) - (gameState.scoreboard?.[a.id] || 0)).map((p: any, idx: number) => (
               <div key={p.id} className="flex items-center gap-3">
-                 <div className="w-6 h-6 bg-black text-white flex items-center justify-center text-xs font-black italic">{idx + 1}</div>
+                 <div className={`w-8 h-8 flex items-center justify-center text-lg font-black italic ${idx === 0 ? "text-yellow-500" : idx === 1 ? "text-zinc-400" : idx === 2 ? "text-amber-700" : "text-black"}`}>{idx + 1}.</div>
                  {allProfiles[p.name]?.avatar ? (
                    <img src={allProfiles[p.name].avatar} alt={p.name} className="w-8 h-8 brutal-border bg-emerald-200 object-cover" />
                  ) : (
@@ -563,7 +713,7 @@ export default function PlayerView() {
                <h3 className="text-2xl font-black uppercase italic mb-4">Current Standings</h3>
                {gameState.standingsLeaderboard.map((entry: any, i: number) => (
                  <div key={entry.player_id} className="flex justify-between font-bold text-xl">
-                   <span>{i+1}. {entry.player_name}</span>
+                   <span><span className={i === 0 ? "text-yellow-600" : i === 1 ? "text-zinc-500" : i === 2 ? "text-amber-700" : "text-black"}>{i+1}.</span> {entry.player_name}</span>
                    <span>{entry.score}</span>
                  </div>
                ))}
@@ -574,7 +724,7 @@ export default function PlayerView() {
                <h3 className="text-3xl font-black uppercase italic mb-4 text-red-600">Game Over</h3>
                {gameState.gameOverLeaderboard.map((entry: any, i: number) => (
                  <div key={entry.player_id} className="flex justify-between font-bold text-2xl">
-                   <span>{i+1}. {entry.player_name}</span>
+                   <span><span className={i === 0 ? "text-yellow-600" : i === 1 ? "text-zinc-500" : i === 2 ? "text-amber-700" : "text-black"}>{i+1}.</span> {entry.player_name}</span>
                    <span>{entry.score}</span>
                  </div>
                ))}

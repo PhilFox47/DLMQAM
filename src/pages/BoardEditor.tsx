@@ -203,18 +203,39 @@ export default function BoardEditor() {
                    <label className="block text-sm font-black uppercase tracking-widest text-zinc-500 mb-3 border-b-4 border-black pb-2">Query Prompt</label>
                    <textarea rows={3} value={editingTile.question.content} onChange={e => setEditingTile({...editingTile, question: {...editingTile.question, content: e.target.value}})} className="w-full bg-white brutal-border text-black font-black text-xl p-4 focus:outline-none focus:bg-yellow-50" placeholder="ENTER TEXT PROMPT..." />
                    <input type="text" value={editingTile.question.src || ''} onChange={e => setEditingTile({...editingTile, question: { ...editingTile.question, type: e.target.value ? 'image' : 'text', src: e.target.value }})} placeholder="IMAGE / VIDEO URL" className="mt-4 w-full bg-white brutal-border text-black font-bold text-sm uppercase p-4 focus:outline-none focus:bg-yellow-50" />
+                   {editingTile.question.src && (
+                      <div className="mt-4 p-4 border-4 border-black bg-white flex justify-center">
+                         <img src={editingTile.question.src} alt="Question Graphic" className="max-h-64 object-contain" />
+                      </div>
+                   )}
                 </div>
                 
                 <div>
                    <label className="block text-sm font-black uppercase tracking-widest text-zinc-500 mb-3 border-b-4 border-black pb-2">Expected Out</label>
                    <textarea rows={3} value={editingTile.answer.content} onChange={e => setEditingTile({...editingTile, answer: {...editingTile.answer, content: e.target.value}})} className="w-full bg-white brutal-border text-black font-black text-xl p-4 focus:outline-none focus:bg-emerald-50" placeholder="ENTER EXPLANATION / ANSWER..." />
                    <input type="text" value={editingTile.answer.src || ''} onChange={e => setEditingTile({...editingTile, answer: { ...editingTile.answer, type: e.target.value ? 'image' : 'text', src: e.target.value }})} placeholder="IMAGE / VIDEO URL" className="mt-4 w-full bg-white brutal-border text-black font-bold text-sm uppercase p-4 focus:outline-none focus:bg-emerald-50" />
+                   {editingTile.answer.src && (
+                      <div className="mt-4 p-4 border-4 border-black bg-white flex justify-center">
+                         <img src={editingTile.answer.src} alt="Answer Graphic" className="max-h-64 object-contain" />
+                      </div>
+                   )}
                 </div>
                 
                 {editingTile.mode === 'guess' && (
                   <div>
                     <label className="block text-sm font-black uppercase tracking-widest text-zinc-500 mb-3 border-b-4 border-black pb-2">Target Float/Int</label>
-                    <input type="number" value={editingTile.correctValue || ''} onChange={e => setEditingTile({...editingTile, correctValue: parseFloat(e.target.value)})} className="w-full bg-white brutal-border text-black font-black text-2xl p-4 focus:outline-none focus:bg-yellow-50 text-center" placeholder="0000" />
+                    <input 
+                      type="text" 
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={editingTile.correctValue !== undefined ? editingTile.correctValue : ''} 
+                      onChange={e => {
+                         const val = e.target.value.replace(/[^0-9]/g, '');
+                         setEditingTile({...editingTile, correctValue: val ? parseInt(val) : undefined})
+                      }} 
+                      className="w-full bg-white brutal-border text-black font-black text-2xl p-4 focus:outline-none focus:bg-yellow-50 text-center" 
+                      placeholder="0000" 
+                    />
                   </div>
                 )}
 

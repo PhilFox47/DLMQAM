@@ -47,7 +47,7 @@ export default function RoleSelection() {
         
         {/* Left Side Branding */}
         <div className="w-full md:w-1/2 p-12 border-b-4 md:border-b-0 md:border-r-4 border-black flex flex-col justify-center bg-black text-white relative overflow-hidden">
-          <p className="text-xs font-black uppercase tracking-widest border-b-2 border-white pb-2 inline-block self-start mb-6">DLMQAM</p>
+          <p className="text-xs font-black uppercase tracking-widest border-b-2 border-white pb-2 inline-block self-start mb-6">DLMQAM 2.0: Electric Boogaloo</p>
           <h1 className="text-7xl font-black leading-[0.85] tracking-tighter italic uppercase relative z-10">IT IS<br/>WEDNESDAY<br/>MY DUDES</h1>
         </div>
 

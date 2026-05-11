@@ -89,6 +89,23 @@ async function startServer() {
     }
   });
 
+  app.delete("/api/profiles/:name", async (req, res) => {
+    try {
+      const { name } = req.params;
+      const profilesPath = path.join(DATA_DIR, "profiles.json");
+      const profilesData = await fs.readFile(profilesPath, "utf8");
+      const profiles = JSON.parse(profilesData);
+      
+      if (profiles[name]) {
+        delete profiles[name];
+        await fs.writeFile(profilesPath, JSON.stringify(profiles, null, 2));
+      }
+      res.json({ status: "ok" });
+    } catch (e) {
+      res.status(500).json({ error: "Failed to delete profile" });
+    }
+  });
+
   app.post("/api/board/import", async (req, res) => {
     try {
       const data = req.body;
@@ -397,6 +414,20 @@ async function startServer() {
             } else if (pResponded) {
                gameState.scoreboard[pid] -= bet;
                gameState.nameToScore[gameState.players[pid]?.name] -= bet;
+            }
+         });
+      } else if (tile.mode === "choice") {
+         const basePoints = tile.value || 0;
+         const pts = basePoints * (gameState.doublePointsActive ? 2 : 1) * (tile.double ? 2 : 1);
+         gameState.buzzRecords.forEach(r => {
+            const pid = r.pid;
+            if (!gameState.scoreboard[pid]) gameState.scoreboard[pid] = 0;
+            if (winners.includes(pid)) {
+               gameState.scoreboard[pid] += pts;
+               if (gameState.players[pid]) gameState.nameToScore[gameState.players[pid].name] += pts;
+            } else {
+               gameState.scoreboard[pid] -= pts;
+               if (gameState.players[pid]) gameState.nameToScore[gameState.players[pid].name] -= pts;
             }
          });
       } else if (winners.length > 0) {

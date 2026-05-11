@@ -332,7 +332,7 @@ export default function HostView() {
                <h3 className="text-sm font-black uppercase italic mb-2">Current Standings</h3>
                {gameState.standingsLeaderboard.map((entry: any, i: number) => (
                  <div key={entry.player_id} className="flex justify-between font-bold text-xs">
-                   <span>{i+1}. {entry.player_name}</span>
+                   <span><span className={i === 0 ? "text-yellow-600" : i === 1 ? "text-zinc-500" : i === 2 ? "text-amber-700" : "text-black"}>{i+1}.</span> {entry.player_name}</span>
                    <span>{entry.score}</span>
                  </div>
                ))}
@@ -343,7 +343,7 @@ export default function HostView() {
                <h3 className="text-lg font-black uppercase italic mb-2 text-red-600">Game Over</h3>
                {gameState.gameOverLeaderboard.map((entry: any, i: number) => (
                  <div key={entry.player_id} className="flex justify-between font-bold text-sm text-black">
-                   <span>{i+1}. {entry.player_name}</span>
+                   <span><span className={i === 0 ? "text-yellow-600" : i === 1 ? "text-zinc-500" : i === 2 ? "text-amber-700" : "text-black"}>{i+1}.</span> {entry.player_name}</span>
                    <span>{entry.score}</span>
                  </div>
                ))}
@@ -476,6 +476,9 @@ export default function HostView() {
                         <div className="bg-zinc-100 p-4 brutal-border mb-4">
                           <h3 className="text-xs uppercase font-black tracking-widest opacity-50 mb-2">Prompt</h3>
                           <p className="text-xl font-bold">{tile.question?.content || 'No text content'}</p>
+                          {tile.question?.src && (
+                             <img src={tile.question.src} alt="Question graphic" className="mt-4 max-h-64 object-contain mx-auto" />
+                          )}
                           {tile.mode === 'choice' && tile.choices && (
                             <div className="grid grid-cols-2 gap-4 mt-4">
                               {tile.choices.map((c: string, i: number) => (
@@ -490,6 +493,9 @@ export default function HostView() {
                         <div className="bg-zinc-100 p-4 brutal-border">
                           <h3 className="text-xs uppercase font-black tracking-widest opacity-50 mb-2 border-b-2 border-zinc-200 pb-2">Admin Answer (Hidden)</h3>
                           {tile.answer?.content && <p className="text-lg font-bold text-emerald-700">{tile.answer.content}</p>}
+                          {tile.answer?.src && (
+                             <img src={tile.answer.src} alt="Answer graphic" className="mt-4 max-h-48 object-contain" />
+                          )}
                           {tile.mode === 'choice' && tile.correctIndex !== undefined && (
                             <p className="text-lg font-bold text-emerald-700">Correct Choice: {["A", "B", "C", "D"][tile.correctIndex]}</p>
                           )}
