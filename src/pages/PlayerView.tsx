@@ -13,6 +13,7 @@ export default function PlayerView() {
 
   const [gameState, setGameState] = useState<any>(null);
   const [myProfile, setMyProfile] = useState<any>(null);
+  const [allProfiles, setAllProfiles] = useState<Record<string, any>>({});
   const [showProfileEditor, setShowProfileEditor] = useState(false);
   const [buzzed, setBuzzed] = useState(false);
   const [answerContent, setAnswerContent] = useState("");
@@ -20,17 +21,54 @@ export default function PlayerView() {
 
   const buzzerSoundRef = useRef<HTMLAudioElement | null>(null);
 
-  const fetchMyProfile = () => {
+  const playTickSound = () => {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.05);
+
+      gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.05);
+
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.05);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  useEffect(() => {
+    if (gameState?.countdownActive && !buzzed && gameState?.countdownSeconds > 0) {
+       playTickSound();
+    }
+  }, [gameState?.countdownSeconds]);
+
+  const fetchProfiles = () => {
     fetch("/api/profiles")
       .then(r => r.json())
       .then(data => {
         const profiles = data.profiles || [];
-        const p = profiles.find((x: any) => x.name === name);
-        if (p) {
-          setMyProfile(p);
-        }
+        const pMap: Record<string, any> = {};
+        profiles.forEach((p: any) => {
+          pMap[p.name] = p;
+          if (p.name === name) {
+            setMyProfile(p);
+          }
+        });
+        setAllProfiles(pMap);
       });
   };
+
+  useEffect(() => {
+    fetchProfiles();
+  }, []);
 
   const handleSaveProfile = (oldName: string, updatedProfile: any) => {
     // If name changed, we may need to reload or change URL. Keep it simple: update then update state
@@ -179,6 +217,11 @@ export default function PlayerView() {
       });
     });
 
+    socket.on("countdown_start", ({ seconds }) => setGameState(s => ({ ...s, countdownActive: true, countdownSeconds: seconds })));
+    socket.on("countdown_update", ({ seconds }) => setGameState(s => ({ ...s, countdownSeconds: seconds })));
+    socket.on("countdown_end", () => setGameState(s => ({ ...s, countdownActive: false })));
+    socket.on("countdown_stop", () => setGameState(s => ({ ...s, countdownActive: false })));
+
     return () => {
       socket.off("game_state");
       socket.off("registered");
@@ -188,6 +231,10 @@ export default function PlayerView() {
       socket.off("buzz_update");
       socket.off("unbuzz");
       socket.off("board_tile_selected");
+      socket.off("countdown_start");
+      socket.off("countdown_update");
+      socket.off("countdown_end");
+      socket.off("countdown_stop");
       socket.disconnect();
     };
   }, [name, guest]);
@@ -215,7 +262,21 @@ export default function PlayerView() {
     socket.emit("place_bet", { bet: riskBet });
   };
 
-  const myScore = gameState.scoreboard[socket.id] || 0;
+  const myScore = gameState.scoreboard?.[socket.id] || 0;
+  
+  const [showQuestionIntro, setShowQuestionIntro] = useState(false);
+  const tCIdx = gameState?.boardCurrentTile?.[0];
+  const tTIdx = gameState?.boardCurrentTile?.[1];
+
+  useEffect(() => {
+    if (tCIdx !== undefined && tTIdx !== undefined) {
+       setShowQuestionIntro(true);
+       const timer = setTimeout(() => setShowQuestionIntro(false), 3000);
+       return () => clearTimeout(timer);
+    } else {
+       setShowQuestionIntro(false);
+    }
+  }, [tCIdx, tTIdx]);
   
   const renderInputArea = () => {
     if (gameState.boardCurrentTile && !gameState.boardOpen) {
@@ -242,7 +303,6 @@ export default function PlayerView() {
           </div>
         );
       }
-      return <div className="text-white text-2xl font-black italic mt-12 bg-black px-6 py-4 brutal-shadow uppercase">Tile selected. Waiting for prompt...</div>;
     }
     
     const currentTile = gameState.boardCurrentTile && gameState.board ? 
@@ -253,7 +313,7 @@ export default function PlayerView() {
         const letters = ["A", "B", "C", "D"];
         return (
           <div className="flex flex-col gap-8 w-full max-w-2xl mx-auto items-center mt-8">
-            {currentTile && currentTile.question && (
+            {currentTile && currentTile.question && gameState.boardOpen && (
                <div className="bg-white brutal-border brutal-shadow text-black p-6 w-full text-left">
                   <span className="opacity-50 text-xs font-black uppercase tracking-widest block mb-2">Prompt</span>
                   <p className="text-2xl font-black">{currentTile.question.content}</p>
@@ -268,7 +328,7 @@ export default function PlayerView() {
                   onClick={() => handleBuzz(letter)}
                 >
                   <span className="text-4xl block mb-2">{letter}</span>
-                  {currentTile && currentTile.choices && currentTile.choices[idx] && <span className="opacity-80 block">{currentTile.choices[idx]}</span>}
+                  {currentTile && currentTile.choices && currentTile.choices[idx] && gameState.boardOpen && <span className="opacity-80 block">{currentTile.choices[idx]}</span>}
                 </button>
               ))}
             </div>
@@ -278,7 +338,7 @@ export default function PlayerView() {
       case "text":
         return (
           <div className="flex flex-col gap-6 w-full max-w-md mx-auto bg-white brutal-border brutal-shadow p-8 mt-8">
-            {currentTile && currentTile.question && (
+            {currentTile && currentTile.question && gameState.boardOpen && (
                <div className="text-left mb-4 border-b-4 border-black pb-4">
                   <p className="text-xl font-black uppercase italic">{currentTile.question.content}</p>
                </div>
@@ -326,6 +386,39 @@ export default function PlayerView() {
 
   return (
     <div className="min-h-screen bg-yellow-400 text-black p-6 font-sans flex flex-col selection:bg-white relative">
+      <AnimatePresence>
+        {showQuestionIntro && gameState.boardCurrentTile && gameState.board?.categories?.[gameState.boardCurrentTile[0]] && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 1.05 }}
+            transition={{ duration: 0.3 }}
+            className="fixed inset-0 bg-yellow-400 z-50 flex flex-col items-center justify-center p-6 text-center"
+          >
+            <div className="bg-white brutal-border brutal-shadow p-8 sm:p-12 max-w-3xl w-full relative border-8 border-black">
+               {gameState.boardRiskActive && (
+                  <div className="absolute top-0 right-0 bg-red-500 text-white font-black px-6 py-2 text-xl uppercase tracking-widest border-b-8 border-l-8 border-black">Risk Wager</div>
+               )}
+               <h2 className="text-4xl sm:text-6xl font-black uppercase italic tracking-tighter mb-6 break-words">
+                  {gameState.board.categories[gameState.boardCurrentTile[0]].name}
+               </h2>
+               <div className="text-7xl sm:text-[10rem] leading-none font-black mb-10 text-blue-600 drop-shadow-[5px_5px_0_rgba(0,0,0,1)]">
+                  {gameState.boardPlayedValues?.[`${gameState.boardCurrentTile[0]}-${gameState.boardCurrentTile[1]}`] || 
+                   gameState.board.categories[gameState.boardCurrentTile[0]].tiles[gameState.boardCurrentTile[1]].value * (gameState.doublePointsActive ? 2 : 1)
+                  } <span className="text-4xl sm:text-6xl text-black drop-shadow-none tracking-tight">PTS</span>
+               </div>
+               <div className="inline-block px-8 py-4 bg-black text-white text-3xl font-black uppercase tracking-widest brutal-border shadow-[6px_6px_0_0_rgba(59,130,246,1)]">
+                 {(() => {
+                    const mode = gameState.board.categories[gameState.boardCurrentTile[0]].tiles[gameState.boardCurrentTile[1]].mode || "buzzer";
+                    const modeMap: Record<string, string> = { buzzer: "Buzzer Question", choice: "Multiple Choice", guess: "Closest Guess", text: "Text Input" };
+                    return modeMap[mode] || "Buzzer Question";
+                 })()}
+               </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {showProfileEditor && (
         <ProfileEditor
           profile={myProfile || { name }}
@@ -333,7 +426,7 @@ export default function PlayerView() {
           onSave={handleSaveProfile}
         />
       )}
-      <div className="flex items-center justify-between bg-white brutal-border brutal-shadow px-6 py-4 mb-12 relative group cursor-pointer" onClick={() => setShowProfileEditor(true)}>
+      <div className="flex items-center justify-between bg-white brutal-border brutal-shadow px-6 py-4 mb-6 relative group cursor-pointer" onClick={() => setShowProfileEditor(true)}>
         <div className="flex items-center gap-6">
           <div className="relative">
             {myProfile?.avatar ? (
@@ -353,7 +446,28 @@ export default function PlayerView() {
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col items-center justify-center -mt-12">
+      <div className="flex-1 flex flex-col xl:flex-row items-start gap-8 w-full">
+         <div className="w-full xl:w-64 bg-white brutal-border brutal-shadow p-4 flex flex-col gap-3 shrink-0 order-last xl:order-first">
+            <h3 className="text-sm font-black uppercase italic tracking-widest text-zinc-500 border-b-4 border-black pb-2 mb-2">Rankings</h3>
+            {Object.values(gameState?.players || {}).sort((a: any, b: any) => (gameState.scoreboard?.[b.id] || 0) - (gameState.scoreboard?.[a.id] || 0)).map((p: any, idx: number) => (
+              <div key={p.id} className="flex items-center gap-3">
+                 <div className="w-6 h-6 bg-black text-white flex items-center justify-center text-xs font-black italic">{idx + 1}</div>
+                 {allProfiles[p.name]?.avatar ? (
+                   <img src={allProfiles[p.name].avatar} alt={p.name} className="w-8 h-8 brutal-border bg-emerald-200 object-cover" />
+                 ) : (
+                   <div className="w-8 h-8 brutal-border bg-zinc-200 flex items-center justify-center text-xs font-black uppercase">{p.name[0] || '?'}</div>
+                 )}
+                 <span className="font-black uppercase tracking-tighter truncate text-sm">{p.name} {p.id === socket.id && '(You)'}</span>
+              </div>
+            ))}
+         </div>
+
+         <div className="flex-1 flex flex-col items-center justify-center w-full min-h-[50vh]">
+           {gameState.countdownActive && (
+              <div className="w-full max-w-2xl bg-yellow-400 border-4 border-black border-dashed p-6 mb-8 text-black text-center relative overflow-hidden">
+                <span className="relative z-10 text-6xl font-black italic tracking-tighter">{gameState.countdownSeconds}s</span>
+              </div>
+           )}
            {gameState.showStandings && gameState.standingsLeaderboard && (
              <div className="w-full max-w-2xl bg-blue-200 brutal-border brutal-shadow-sm p-6 mb-8 text-black">
                <h3 className="text-2xl font-black uppercase italic mb-4">Current Standings</h3>
@@ -416,6 +530,7 @@ export default function PlayerView() {
         )}
         
         {(!gameState.finalRoundActive || gameState.isFinalist) && renderInputArea()}
+         </div>
       </div>
     </div>
   );

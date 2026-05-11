@@ -16,6 +16,25 @@ export default function HostView() {
 
   const [gameState, setGameState] = useState<any>(null);
   const [showProfiles, setShowProfiles] = useState(false);
+  const [allProfiles, setAllProfiles] = useState<Record<string, any>>({});
+
+  const fetchProfiles = () => {
+    fetch("/api/profiles")
+      .then(r => r.json())
+      .then(data => {
+        const pMap: Record<string, any> = {};
+        if (data.profiles) {
+          data.profiles.forEach((p: any) => {
+            pMap[p.name] = p;
+          });
+        }
+        setAllProfiles(pMap);
+      });
+  };
+
+  useEffect(() => {
+    fetchProfiles();
+  }, []);
 
   useEffect(() => {
     socket.connect();
@@ -35,6 +54,7 @@ export default function HostView() {
         players: { ...s.players, [player.id]: player },
         scoreboard
       }));
+      setAllProfiles(prev => ({ ...prev, [player.name]: profile }));
     });
 
     socket.on("buzz_update", ({ records }) => setGameState(s => ({ ...s, buzzRecords: records })));
@@ -123,6 +143,11 @@ export default function HostView() {
       });
     });
 
+    socket.on("countdown_start", ({ seconds }) => setGameState(s => ({ ...s, countdownActive: true, countdownSeconds: seconds })));
+    socket.on("countdown_update", ({ seconds }) => setGameState(s => ({ ...s, countdownSeconds: seconds })));
+    socket.on("countdown_end", () => setGameState(s => ({ ...s, countdownActive: false })));
+    socket.on("countdown_stop", () => setGameState(s => ({ ...s, countdownActive: false })));
+
     return () => {
       socket.off("game_state");
       socket.off("registered");
@@ -132,6 +157,10 @@ export default function HostView() {
       socket.off("lock_status");
       socket.off("unbuzz");
       socket.off("board_tile_selected");
+      socket.off("countdown_start");
+      socket.off("countdown_update");
+      socket.off("countdown_end");
+      socket.off("countdown_stop");
       socket.disconnect();
     };
   }, [name, password]);
@@ -180,6 +209,11 @@ export default function HostView() {
                   <div className="w-8 h-8 bg-black text-white flex items-center justify-center font-black text-sm italic tracking-tighter">
                     {idx + 1}
                   </div>
+                  {allProfiles[player.name]?.avatar ? (
+                    <img src={allProfiles[player.name].avatar} alt={player.name} className="w-8 h-8 brutal-border bg-emerald-200 object-cover" />
+                  ) : (
+                    <div className="w-8 h-8 brutal-border bg-zinc-200 flex items-center justify-center text-xs font-black text-black">?</div>
+                  )}
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="font-black uppercase tracking-widest text-sm">{player.name}</span>
@@ -318,8 +352,13 @@ export default function HostView() {
              <div key={p.id} className="bg-white brutal-border brutal-shadow-sm p-2 flex flex-col">
                <div className="flex justify-between items-center mb-2">
                  <div className="flex items-center gap-2">
-                   <div className={clsx("w-3 h-3 brutal-border", p.status === "online" ? "bg-emerald-400" : "bg-red-500")}></div>
-                   <span className="font-black text-sm uppercase tracking-tighter truncate max-w-[120px]" title={p.name}>{p.name}</span>
+                   {allProfiles[p.name]?.avatar ? (
+                     <img src={allProfiles[p.name].avatar} alt={p.name} className="w-5 h-5 brutal-border bg-emerald-200 object-cover shrink-0" />
+                   ) : (
+                     <div className="w-5 h-5 brutal-border bg-zinc-200 flex items-center justify-center text-[10px] font-black uppercase text-black shrink-0">{p.name[0] || '?'}</div>
+                   )}
+                   <div className={clsx("w-3 h-3 brutal-border shrink-0", p.status === "online" ? "bg-emerald-400" : "bg-red-500")}></div>
+                   <span className="font-black text-sm uppercase tracking-tighter truncate max-w-[90px]" title={p.name}>{p.name}</span>
                  </div>
                  <div className="flex items-center gap-2">
                    <span className="font-black text-lg tracking-tighter">{gameState.scoreboard[p.id] || 0}</span>
@@ -373,6 +412,17 @@ export default function HostView() {
                      <button onClick={() => socket.emit("show_final_question")} className="bg-emerald-400 p-4 brutal-border flex-1 font-black uppercase tracking-widest hover:bg-emerald-300">Show Question</button>
                      <button onClick={() => socket.emit("show_final_answer")} className="bg-purple-400 p-4 brutal-border flex-1 font-black uppercase tracking-widest hover:bg-purple-300">Show Answer</button>
                      <button onClick={() => socket.emit("next_final_turn")} className="bg-yellow-400 p-4 brutal-border flex-1 font-black uppercase tracking-widest hover:bg-yellow-300">Next Turn</button>
+                   </div>
+                   
+                   <div className="flex gap-4 mb-4">
+                     {gameState.countdownActive ? (
+                        <div className="flex items-center gap-4 border-2 border-black p-2 bg-yellow-300 w-fit">
+                           <span className="font-black text-xl">{gameState.countdownSeconds}s</span>
+                           <button onClick={() => socket.emit("stop_countdown")} className="px-4 py-1 bg-red-400 text-white font-black brutal-border hover:bg-black transition-colors">Stop</button>
+                        </div>
+                     ) : (
+                        <button onClick={() => socket.emit("start_countdown", { seconds: 10 })} className="bg-yellow-400 p-4 brutal-border font-black uppercase tracking-widest hover:bg-yellow-300">Start 10s Timer</button>
+                     )}
                    </div>
                    
                    <p className="text-zinc-500 font-bold mb-4">Choose a winner to progress the stage:</p>
@@ -464,12 +514,28 @@ export default function HostView() {
                             </button>
                           )}
                           {gameState.boardOpen && (
-                            <button 
-                              onClick={() => socket.emit("board_reveal_answer")}
-                              className="bg-emerald-400 text-black brutal-border hover:brutal-shadow-sm px-6 py-3 font-black uppercase tracking-widest active:translate-y-px transition-all shadow-[2px_2px_0_0_#000]"
-                            >
-                              Reveal Answer & Complete
-                            </button>
+                            <>
+                              <button 
+                                onClick={() => socket.emit("board_reveal_answer")}
+                                className="bg-emerald-400 text-black brutal-border hover:brutal-shadow-sm px-6 py-3 font-black uppercase tracking-widest active:translate-y-px transition-all shadow-[2px_2px_0_0_#000]"
+                              >
+                                Reveal Answer & Complete
+                              </button>
+                              
+                              {gameState.countdownActive ? (
+                                <div className="flex items-center gap-4 border-2 border-black p-2 bg-yellow-300 w-fit">
+                                   <span className="font-black text-xl">{gameState.countdownSeconds}s</span>
+                                   <button onClick={() => socket.emit("stop_countdown")} className="px-4 py-1 bg-red-400 text-white font-black brutal-border hover:bg-black transition-colors">Stop</button>
+                                </div>
+                              ) : (
+                                <button 
+                                  onClick={() => socket.emit("start_countdown", { seconds: 10 })}
+                                  className="bg-yellow-400 text-black brutal-border hover:brutal-shadow-sm px-6 py-3 font-black uppercase tracking-widest active:translate-y-px transition-all shadow-[2px_2px_0_0_#000]"
+                                >
+                                  10s Timer
+                                </button>
+                              )}
+                            </>
                           )}
                         </div>
                       </div>

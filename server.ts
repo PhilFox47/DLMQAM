@@ -148,7 +148,11 @@ async function startServer() {
     tieBreakerQuestion: null as any,
     tieBreakerAnswerValue: null as number | null,
     tieBreakerGuesses: {} as Record<string, number>,
-    preFinalists: [] as string[]
+    preFinalists: [] as string[],
+    
+    countdownActive: false,
+    countdownSeconds: 0,
+    countdownInterval: null as NodeJS.Timeout | null,
   };
 
   async function loadScores() {
@@ -203,7 +207,13 @@ async function startServer() {
 
         const profilesData = await fs.readFile(path.join(DATA_DIR, "profiles.json"), "utf8");
         const profiles = JSON.parse(profilesData);
-        const profile = profiles[name];
+        let profile = profiles[name];
+
+        if (!profile) {
+           profile = { stats: { total_points: 0, games_played: 0 }, achievements: {} };
+           profiles[name] = profile;
+           await fs.writeFile(path.join(DATA_DIR, "profiles.json"), JSON.stringify(profiles, null, 2));
+        }
 
         socket.emit("registered", { role: "player", id: socket.id, name, guest: !!guest, profile });
         socket.emit("game_state", gameState);
@@ -347,6 +357,13 @@ async function startServer() {
       if (!gameState.boardCurrentTile) return;
       const [cIdx, tIdx] = gameState.boardCurrentTile;
       const tile = gameState.board.categories[cIdx].tiles[tIdx];
+      
+      if (gameState.countdownInterval) {
+         clearInterval(gameState.countdownInterval);
+         gameState.countdownInterval = null;
+      }
+      gameState.countdownActive = false;
+      io.emit("countdown_stop");
       
       const key = `${cIdx}-${tIdx}`;
       gameState.boardRevealed.push(key);
@@ -569,6 +586,43 @@ async function startServer() {
       io.emit("game_over", { leaderboard });
     });
 
+    socket.on("start_countdown", (data) => {
+      if (socket.id !== gameState.hostId) return;
+      const seconds = data?.seconds || 10; // default 10
+      gameState.countdownActive = true;
+      gameState.countdownSeconds = seconds;
+      
+      if (gameState.countdownInterval) {
+         clearInterval(gameState.countdownInterval);
+      }
+
+      io.emit("countdown_start", { seconds });
+
+      gameState.countdownInterval = setInterval(() => {
+         gameState.countdownSeconds--;
+         io.emit("countdown_update", { seconds: gameState.countdownSeconds });
+         if (gameState.countdownSeconds <= 0) {
+            if (gameState.countdownInterval) clearInterval(gameState.countdownInterval);
+            gameState.countdownInterval = null;
+            gameState.countdownActive = false;
+            // Lock out players from buzzing / submitting
+            gameState.buzzLocked = true;
+            io.emit("countdown_end");
+            io.emit("lock_status", { locked: true });
+         }
+      }, 1000);
+    });
+
+    socket.on("stop_countdown", () => {
+      if (socket.id !== gameState.hostId) return;
+      if (gameState.countdownInterval) {
+         clearInterval(gameState.countdownInterval);
+         gameState.countdownInterval = null;
+      }
+      gameState.countdownActive = false;
+      io.emit("countdown_stop");
+    });
+
     // Select Tile
     socket.on("select_tile", (data) => {
       const { category_index, tile_index } = data;
@@ -591,6 +645,13 @@ async function startServer() {
       gameState.riskBets = {};
       gameState.buzzRecords = [];
       gameState.buzzLocked = false;
+      
+      if (gameState.countdownInterval) {
+         clearInterval(gameState.countdownInterval);
+         gameState.countdownInterval = null;
+      }
+      gameState.countdownActive = false;
+      io.emit("countdown_stop");
 
       // Broadcast changes
       io.emit("board_tile_selected", { category_index, tile_index, tile });

@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { X } from "lucide-react";
+import React, { useState, useRef } from "react";
+import { X, Upload } from "lucide-react";
 
 interface ProfileEditorProps {
   profile: any;
@@ -10,6 +10,7 @@ interface ProfileEditorProps {
 export default function ProfileEditor({ profile, onClose, onSave }: ProfileEditorProps) {
   const [name, setName] = useState(profile.name || "");
   const [avatar, setAvatar] = useState(profile.avatar || "");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSave = () => {
     if (!name.trim()) return alert("Name is required");
@@ -18,6 +19,19 @@ export default function ProfileEditor({ profile, onClose, onSave }: ProfileEdito
       new_name: name.trim(),
       avatar: avatar.trim()
     });
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          setAvatar(event.target.result as string);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   return (
@@ -36,13 +50,24 @@ export default function ProfileEditor({ profile, onClose, onSave }: ProfileEdito
             />
           </div>
           <div>
-            <label className="block text-sm font-black tracking-widest uppercase mb-1">Avatar URL</label>
-            <input
-              type="text"
-              value={avatar}
-              onChange={e => setAvatar(e.target.value)}
-              className="w-full bg-zinc-100 brutal-border px-4 py-2 font-bold focus:outline-none focus:bg-yellow-100"
-            />
+            <label className="block text-sm font-black tracking-widest uppercase mb-1">Avatar URL or File</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={avatar}
+                onChange={e => setAvatar(e.target.value)}
+                placeholder="https://..."
+                className="w-full bg-zinc-100 brutal-border px-4 py-2 font-bold focus:outline-none focus:bg-yellow-100"
+              />
+              <button 
+                onClick={() => fileInputRef.current?.click()}
+                className="bg-black text-white px-4 brutal-border flex items-center justify-center hover:bg-zinc-800"
+                title="Upload Image"
+              >
+                <Upload size={20} />
+              </button>
+            </div>
+            <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileChange} />
             {avatar && <img src={avatar} alt="Preview" className="w-16 h-16 object-cover mt-2 brutal-border" />}
           </div>
           {profile.stats && (
