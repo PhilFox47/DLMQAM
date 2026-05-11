@@ -45,6 +45,71 @@ export default function PlayerView() {
     }
   };
 
+  const playHappySound = () => {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(440, audioCtx.currentTime);     // A4
+      osc.frequency.setValueAtTime(554.37, audioCtx.currentTime + 0.1); // C#5
+      osc.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.2); // E5
+      osc.frequency.setValueAtTime(880, audioCtx.currentTime + 0.3);    // A5
+      
+      gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+      gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.6);
+
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+
+      osc.start(audioCtx.currentTime);
+      osc.stop(audioCtx.currentTime + 0.6);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const playSadSound = () => {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(300, audioCtx.currentTime);
+      osc.frequency.linearRampToValueAtTime(150, audioCtx.currentTime + 0.6);
+      
+      gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+      gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.6);
+
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+
+      osc.start(audioCtx.currentTime);
+      osc.stop(audioCtx.currentTime + 0.6);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const prevScoreRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!gameState || !socket.id || !gameState.scoreboard) return;
+    const currentScore = gameState.scoreboard[socket.id];
+    if (currentScore !== undefined && prevScoreRef.current !== null && currentScore !== prevScoreRef.current) {
+      if (currentScore > prevScoreRef.current) {
+        playHappySound();
+      } else if (currentScore < prevScoreRef.current) {
+        playSadSound();
+      }
+    }
+    if (currentScore !== undefined) {
+      prevScoreRef.current = currentScore;
+    }
+  }, [gameState?.scoreboard, socket.id]);
+
   useEffect(() => {
     if (gameState?.countdownActive && !buzzed && gameState?.countdownSeconds > 0) {
        playTickSound();
