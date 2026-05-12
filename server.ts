@@ -26,6 +26,12 @@ async function ensureDataFiles() {
     } catch {
       await fs.writeFile(path.join(DATA_DIR, "scoreboard.json"), JSON.stringify({}));
     }
+    // Initialize games
+    try {
+      await fs.access(path.join(DATA_DIR, "games.json"));
+    } catch {
+      await fs.writeFile(path.join(DATA_DIR, "games.json"), JSON.stringify([]));
+    }
   } catch (err) {
     console.error("Failed to initialize data files", err);
   }
@@ -47,6 +53,51 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
+  app.get("/api/games", async (req, res) => {
+    try {
+      const data = await fs.readFile(path.join(DATA_DIR, "games.json"), "utf8");
+      res.json(JSON.parse(data));
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Failed to load games" });
+    }
+  });
+
+  app.delete("/api/games/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const data = await fs.readFile(path.join(DATA_DIR, "games.json"), "utf8");
+      let games = JSON.parse(data);
+      const gameIndex = games.findIndex((g: any) => g.id === id);
+      if (gameIndex === -1) return res.status(404).json({ error: "Game not found" });
+      
+      const game = games[gameIndex];
+      games.splice(gameIndex, 1);
+      await fs.writeFile(path.join(DATA_DIR, "games.json"), JSON.stringify(games, null, 2));
+
+      // Also need to remove stats from profiles
+      const profilesData = await fs.readFile(path.join(DATA_DIR, "profiles.json"), "utf8");
+      const profiles = JSON.parse(profilesData);
+      
+      game.leaderboard.forEach(({ player_name, score }: any, index: number) => {
+         if (profiles[player_name] && profiles[player_name].stats) {
+            profiles[player_name].stats.total_points = Math.max(0, profiles[player_name].stats.total_points - score);
+            profiles[player_name].stats.games_played = Math.max(0, profiles[player_name].stats.games_played - 1);
+            if (index === 0) {
+               profiles[player_name].stats.wins = Math.max(0, (profiles[player_name].stats.wins || 0) - 1);
+            }
+         }
+      });
+      await fs.writeFile(path.join(DATA_DIR, "profiles.json"), JSON.stringify(profiles, null, 2));
+      io.emit("profiles_updated", Object.entries(profiles).map(([name, p]) => ({ name, ...(p as any) })));
+
+      res.json({ status: "ok" });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Failed to delete game" });
+    }
+  });
+
   app.get("/api/profiles", async (req, res) => {
     try {
       const data = await fs.readFile(path.join(DATA_DIR, "profiles.json"), "utf8");
@@ -59,7 +110,7 @@ async function startServer() {
 
   app.post("/api/profiles", async (req, res) => {
     try {
-      const { name, new_name, avatar, buzzer, color, stats, achievements } = req.body;
+      const { name, new_name, avatar, buzzer, color, stats, achievements, history } = req.body;
       if (!name) return res.status(400).json({ error: "Name required" });
 
       const profilesPath = path.join(DATA_DIR, "profiles.json");
@@ -74,6 +125,7 @@ async function startServer() {
       if (color !== undefined) profile.color = color;
       if (stats !== undefined) profile.stats = { ...profile.stats, ...stats };
       if (achievements !== undefined) profile.achievements = { ...profile.achievements, ...achievements };
+      if (history !== undefined) profile.history = history;
 
       if (targetName && targetName !== name) {
         profiles[targetName] = profile;
@@ -629,7 +681,7 @@ async function startServer() {
       io.emit("standings", { leaderboard });
     });
 
-    socket.on("end_game", () => {
+    socket.on("end_game", async () => {
       if (socket.id !== gameState.hostId) return;
       gameState.isGameOver = !gameState.isGameOver;
       if (gameState.isGameOver) {
@@ -641,6 +693,50 @@ async function startServer() {
            };
         }).sort((a,b) => b.score - a.score);
         io.emit("game_over", { leaderboard });
+
+        try {
+          const profilesData = await fs.readFile(path.join(DATA_DIR, "profiles.json"), "utf8");
+          const profiles = JSON.parse(profilesData);
+          const date = new Date().toISOString();
+          const categories = gameState.board?.categories?.map((c: any) => c.name) || [];
+          const gameId = date + "-" + Math.random().toString(36).substr(2, 9);
+          
+          leaderboard.forEach(({ player_name, score }, index) => {
+            if (profiles[player_name]) {
+              const profile = profiles[player_name];
+              if (!profile.history) profile.history = [];
+              profile.history.push({
+                id: gameId,
+                date,
+                score,
+                position: index + 1,
+                numPlayers: leaderboard.length,
+                categories
+              });
+
+              if (!profile.stats) profile.stats = { total_points: 0, games_played: 0 };
+              profile.stats.total_points += score;
+              profile.stats.games_played += 1;
+              if (index === 0) {
+                 profile.stats.wins = (profile.stats.wins || 0) + 1;
+              }
+            }
+          });
+          await fs.writeFile(path.join(DATA_DIR, "profiles.json"), JSON.stringify(profiles, null, 2));
+
+          try {
+            const gamesData = await fs.readFile(path.join(DATA_DIR, "games.json"), "utf8");
+            let games = JSON.parse(gamesData);
+            games.push({ id: gameId, date, categories, leaderboard });
+            await fs.writeFile(path.join(DATA_DIR, "games.json"), JSON.stringify(games, null, 2));
+          } catch(err) {
+            console.error("Failed to update games.json", err);
+          }
+
+          io.emit("profiles_updated", Object.entries(profiles).map(([name, data]) => ({ name, ...(data as any) })));
+        } catch (e) {
+          console.error("Failed to update profile histories", e);
+        }
       } else {
         io.emit("resume_game");
       }

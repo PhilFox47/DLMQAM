@@ -267,6 +267,17 @@ export default function PlayerView() {
       if (player_id === socket.id) setBuzzed(false);
     });
 
+    socket.on("profiles_updated", (profilesList) => {
+      const pMap: Record<string, any> = {};
+      profilesList.forEach((p: any) => {
+        pMap[p.name] = p;
+        if (p.name === name) {
+          setMyProfile(p);
+        }
+      });
+      setAllProfiles(pMap);
+    });
+
     socket.on("board", ({ board, revealed, playedValues }) => {
       setGameState(s => ({
         ...s,
@@ -444,6 +455,38 @@ export default function PlayerView() {
   useEffect(() => {
     if (tCIdx !== undefined && tTIdx !== undefined) {
        setShowQuestionIntro(true);
+       
+       const tile = gameState?.board?.categories?.[tCIdx]?.tiles?.[tTIdx];
+       if (tile && 'speechSynthesis' in window) {
+         window.speechSynthesis.cancel();
+         
+         const mode = tile.mode || "buzzer";
+         let primaryPhrase = "";
+         if (mode === "buzzer") primaryPhrase = "BUZZ FAST!";
+         else if (mode === "guess") primaryPhrase = "GIVE ME YOUR GUESS!";
+         else if (mode === "choice") primaryPhrase = "CHOOSE WISELY!";
+         else if (mode === "text") primaryPhrase = "GET READY TO TYPE!";
+         
+         let secondaryPhrase = "";
+         if (tile.double || gameState?.doublePointsActive) {
+            secondaryPhrase = " FOR DOUBLE THE POINTS!!";
+         } else if (tile.risk || gameState?.boardRiskActive) {
+            secondaryPhrase = " BUT MAKE IT RISKY!";
+         }
+         
+         const utterance = new SpeechSynthesisUtterance(primaryPhrase + secondaryPhrase);
+         utterance.rate = 1.1;
+         utterance.pitch = 0.8;
+         
+         const voices = window.speechSynthesis.getVoices();
+         const englishVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Male') || v.name.includes('Google US English')));
+         if (englishVoice) {
+           utterance.voice = englishVoice;
+         }
+                  
+         window.speechSynthesis.speak(utterance);
+       }
+
        const timer = setTimeout(() => setShowQuestionIntro(false), 3000);
        return () => clearTimeout(timer);
     } else {
@@ -744,11 +787,22 @@ export default function PlayerView() {
                <h2 className="text-4xl sm:text-6xl font-black uppercase italic tracking-tighter mb-6 break-words">
                   {gameState.board.categories[gameState.boardCurrentTile[0]].name}
                </h2>
-               <div className="text-7xl sm:text-[10rem] leading-none font-black mb-10 text-white drop-shadow-[5px_5px_0_rgba(0,0,0,1)]">
-                  {gameState.boardPlayedValues?.[`${gameState.boardCurrentTile[0]}-${gameState.boardCurrentTile[1]}`] || 
-                   gameState.board.categories[gameState.boardCurrentTile[0]].tiles[gameState.boardCurrentTile[1]].value * (gameState.doublePointsActive ? 2 : 1)
-                  } <span className="text-4xl sm:text-6xl text-black drop-shadow-none tracking-tight">PTS</span>
-               </div>
+               {(() => {
+                 const mode = gameState.board.categories[gameState.boardCurrentTile[0]].tiles[gameState.boardCurrentTile[1]].mode || "buzzer";
+                 const textColorMap: Record<string, string> = {
+                    choice: "text-blue-400",
+                    guess: "text-red-400",
+                    text: "text-emerald-400",
+                    buzzer: "text-yellow-400"
+                 };
+                 return (
+                   <div className={`text-7xl sm:text-[10rem] leading-none font-black mb-10 ${textColorMap[mode] || "text-yellow-400"} drop-shadow-[5px_5px_0_rgba(0,0,0,1)]`}>
+                      {gameState.boardPlayedValues?.[`${gameState.boardCurrentTile[0]}-${gameState.boardCurrentTile[1]}`] || 
+                       gameState.board.categories[gameState.boardCurrentTile[0]].tiles[gameState.boardCurrentTile[1]].value * (gameState.doublePointsActive ? 2 : 1)
+                      } <span className="text-4xl sm:text-6xl text-black drop-shadow-none tracking-tight">PTS</span>
+                   </div>
+                 );
+               })()}
                {(() => {
                   const mode = gameState.board.categories[gameState.boardCurrentTile[0]].tiles[gameState.boardCurrentTile[1]].mode || "buzzer";
                   const modeMap: Record<string, string> = { buzzer: "Buzzer Question", choice: "Multiple Choice", guess: "Closest Guess", text: "Text Input" };

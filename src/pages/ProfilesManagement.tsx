@@ -40,6 +40,7 @@ export default function ProfilesManagement({ onClose }: { onClose?: () => void }
           profile={editingProfile}
           onClose={() => setEditingProfile(null)}
           onSave={handleSaveProfile}
+          isHost={true}
         />
       )}
       <div className="max-w-6xl mx-auto pb-12">
@@ -70,6 +71,10 @@ export default function ProfilesManagement({ onClose }: { onClose?: () => void }
                 <div className="flex justify-between items-center">
                   <span className="text-xs font-black uppercase tracking-widest text-zinc-500">Sessions</span>
                   <span className="text-xl font-black">{p.stats?.games_played || 0}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-black uppercase tracking-widest text-zinc-500">Wins</span>
+                  <span className="text-xl font-black text-yellow-600">{p.stats?.wins || 0}</span>
                 </div>
               </div>
             </div>
