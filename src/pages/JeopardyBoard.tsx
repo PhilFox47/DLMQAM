@@ -39,7 +39,7 @@ export default function JeopardyBoard({ gameState, isHost }: { gameState: any, i
                text: "bg-emerald-400",
                buzzer: "bg-yellow-400"
              };
-             const tileBg = modeColorMap[tile.mode || "buzzer"] || "bg-yellow-400";
+             const tileBg = isHost ? (modeColorMap[tile.mode || "buzzer"] || "bg-yellow-400") : "bg-white";
 
              let bgClass = `${tileBg} text-black`;
              if (isUsed) bgClass = "bg-zinc-200 opacity-50 cursor-not-allowed";
@@ -51,7 +51,7 @@ export default function JeopardyBoard({ gameState, isHost }: { gameState: any, i
                      text: "hover:bg-emerald-500",
                      buzzer: "hover:bg-yellow-100"
                  };
-                 const hoverBg = hoverColorMap[tile.mode || "buzzer"] || "hover:bg-yellow-100";
+                 const hoverBg = isHost ? (hoverColorMap[tile.mode || "buzzer"] || "hover:bg-yellow-100") : "hover:bg-yellow-100";
                  bgClass += ` ${hoverBg} cursor-pointer block hover:-translate-y-1 hover:shadow-lg focus:outline-none focus:ring-4 focus:ring-black`;
              }
              else bgClass += " cursor-not-allowed";

@@ -728,7 +728,9 @@ export default function PlayerView() {
             className={clsx(
               "fixed inset-0 z-50 flex flex-col items-center justify-center p-6 text-center",
               (() => {
-                 const mode = gameState.board.categories[gameState.boardCurrentTile[0]].tiles[gameState.boardCurrentTile[1]].mode || "buzzer";
+                 const category = gameState.board.categories[gameState.boardCurrentTile[0]];
+                 const tile = category?.tiles?.[gameState.boardCurrentTile[1]];
+                 const mode = tile?.mode || "buzzer";
                  const colorMap: Record<string, string> = { choice: "bg-blue-400", guess: "bg-red-400", text: "bg-emerald-400", buzzer: "bg-yellow-400" };
                  return colorMap[mode] || "bg-yellow-400";
               })()
