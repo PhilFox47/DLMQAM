@@ -46,6 +46,68 @@ async function startServer() {
     cors: { origin: "*" }
   });
 
+  // Socket.IO Game State & Logic
+  const gameState = {
+    hostId: null as string | null,
+    players: {} as Record<string, { id: string, name: string, role: 'player', isGuest: boolean, pingMs: number, status: string }>,
+    nameToScore: {} as Record<string, number>,
+    scoreboard: {} as Record<string, number>,
+    doublePointsActive: false,
+    questionMode: null as 'buzzer' | 'guess' | 'choice' | 'text' | null,
+    buzzLocked: false,
+    buzzRecords: [] as Array<{ pid: string, time: number, answer?: any, bet?: number }>,
+    correctAnswer: null as any,
+    answersRevealed: false,
+    
+    board: null as any,
+    boardRevealed: [] as string[],
+    boardPlayedValues: {} as Record<string, number>,
+    boardSelector: null as string | null,
+    boardCurrentTile: null as [number, number] | null,
+    boardOpen: false,
+    boardRiskActive: false,
+    betsConfirmed: false,
+    riskBets: {} as Record<string, number>,
+    questionPointReceivers: new Set<string>(),
+    isGameOver: false,
+    
+    finalRoundActive: false,
+    finalistIds: [] as string[],
+    finalRounds: [] as any[],
+    finalStageIdx: 0,
+    finalQuestionIdx: -1,
+    finalTurnIdx: -1,
+    finalTurnOrder: [] as string[],
+    pendingFinalQuestion: null as any,
+    finalStats: { quickfire: {} as Record<string, number>, turnlist: {} as Record<string, number>, discussion: {} as Record<string, number> },
+
+    tieBreakerActive: false,
+    tieBreakerPlayers: [] as string[],
+    tieBreakerSlots: 0,
+    tieBreakerQuestion: null as any,
+    tieBreakerAnswerValue: null as number | null,
+    tieBreakerGuesses: {} as Record<string, number>,
+    preFinalists: [] as string[],
+    
+    countdownActive: false,
+    countdownSeconds: 0,
+    countdownInterval: null as NodeJS.Timeout | null,
+  };
+
+  async function loadScores() {
+    try {
+      const data = await fs.readFile(path.join(DATA_DIR, "scoreboard.json"), "utf8");
+      gameState.nameToScore = JSON.parse(data);
+    } catch (e) {}
+  }
+  await loadScores();
+
+  async function saveScores() {
+    try {
+      await fs.writeFile(path.join(DATA_DIR, "scoreboard.json"), JSON.stringify(gameState.nameToScore));
+    } catch (e) {}
+  }
+
   // API Routes
   app.use(express.json({ limit: "50mb" }));
   
@@ -135,6 +197,20 @@ async function startServer() {
       if (targetName && targetName !== name) {
         profiles[targetName] = profile;
         delete profiles[name];
+
+        if (gameState.nameToScore[name] !== undefined) {
+          gameState.nameToScore[targetName] = gameState.nameToScore[name];
+          delete gameState.nameToScore[name];
+          saveScores();
+        }
+
+        const pids = Object.keys(gameState.players).filter(pid => gameState.players[pid].name === name);
+        if (pids.length > 0) {
+           pids.forEach(pid => {
+              gameState.players[pid].name = targetName;
+           });
+           io.emit("game_state", gameState);
+        }
       } else {
         profiles[targetName] = profile;
       }
@@ -183,68 +259,6 @@ async function startServer() {
   app.get("/api/board/export", (req, res) => {
     res.json(gameState.board || {});
   });
-
-  // Socket.IO Game State & Logic
-  const gameState = {
-    hostId: null as string | null,
-    players: {} as Record<string, { id: string, name: string, role: 'player', isGuest: boolean, pingMs: number, status: string }>,
-    nameToScore: {} as Record<string, number>,
-    scoreboard: {} as Record<string, number>,
-    doublePointsActive: false,
-    questionMode: null as 'buzzer' | 'guess' | 'choice' | 'text' | null,
-    buzzLocked: false,
-    buzzRecords: [] as Array<{ pid: string, time: number, answer?: any, bet?: number }>,
-    correctAnswer: null as any,
-    answersRevealed: false,
-    
-    board: null as any,
-    boardRevealed: [] as string[],
-    boardPlayedValues: {} as Record<string, number>,
-    boardSelector: null as string | null,
-    boardCurrentTile: null as [number, number] | null,
-    boardOpen: false,
-    boardRiskActive: false,
-    betsConfirmed: false,
-    riskBets: {} as Record<string, number>,
-    questionPointReceivers: new Set<string>(),
-    isGameOver: false,
-    
-    finalRoundActive: false,
-    finalistIds: [] as string[],
-    finalRounds: [] as any[],
-    finalStageIdx: 0,
-    finalQuestionIdx: -1,
-    finalTurnIdx: -1,
-    finalTurnOrder: [] as string[],
-    pendingFinalQuestion: null as any,
-    finalStats: { quickfire: {} as Record<string, number>, turnlist: {} as Record<string, number>, discussion: {} as Record<string, number> },
-
-    tieBreakerActive: false,
-    tieBreakerPlayers: [] as string[],
-    tieBreakerSlots: 0,
-    tieBreakerQuestion: null as any,
-    tieBreakerAnswerValue: null as number | null,
-    tieBreakerGuesses: {} as Record<string, number>,
-    preFinalists: [] as string[],
-    
-    countdownActive: false,
-    countdownSeconds: 0,
-    countdownInterval: null as NodeJS.Timeout | null,
-  };
-
-  async function loadScores() {
-    try {
-      const data = await fs.readFile(path.join(DATA_DIR, "scoreboard.json"), "utf8");
-      gameState.nameToScore = JSON.parse(data);
-    } catch (e) {}
-  }
-  await loadScores();
-
-  async function saveScores() {
-    try {
-      await fs.writeFile(path.join(DATA_DIR, "scoreboard.json"), JSON.stringify(gameState.nameToScore));
-    } catch (e) {}
-  }
 
   function emitToHost(event: string, payload: any) {
     if (gameState.hostId) io.to(gameState.hostId).emit(event, payload);
@@ -301,7 +315,7 @@ async function startServer() {
 
           if (gameState.boardSelector === existingPid) gameState.boardSelector = socket.id;
 
-          emitToHost("player_removed", { player_id: existingPid, scoreboard: gameState.scoreboard });
+          io.emit("player_removed", { player_id: existingPid, scoreboard: gameState.scoreboard });
         }
 
         // Player

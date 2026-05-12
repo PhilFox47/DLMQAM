@@ -229,6 +229,7 @@ export default function HostView() {
     return () => {
       socket.off("game_state");
       socket.off("registered");
+      socket.off("player_removed");
       socket.off("player_joined");
       socket.off("buzz_update");
       socket.off("scoreboard");
