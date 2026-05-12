@@ -149,6 +149,7 @@ async function startServer() {
     boardRiskActive: false,
     betsConfirmed: false,
     riskBets: {} as Record<string, number>,
+    questionPointReceivers: new Set<string>(),
     isGameOver: false,
     
     finalRoundActive: false,
@@ -290,7 +291,17 @@ async function startServer() {
       // If positive points are awarded, this person probably got the question right, so they get to pick next
       if (points > 0) {
          gameState.boardSelector = player_id;
+         gameState.questionPointReceivers.add(player_id);
          io.emit("board_selector", { player_id, player_name: p?.name });
+         
+         // If answers are already revealed and this is a mode where we track winners this way, emit an update so the "Winners" section updates
+         if (gameState.answersRevealed && (gameState.questionMode === "text" || gameState.questionMode === "buzzer")) {
+            const answerMsg = {
+               winners: Array.from(gameState.questionPointReceivers),
+               buzzRecords: gameState.buzzRecords
+            };
+            io.emit("board_answer_update", answerMsg);
+         }
       }
 
       io.emit("scoreboard", { scoreboard: gameState.scoreboard });
@@ -404,6 +415,8 @@ async function startServer() {
          if (minDiff < Infinity) {
             winners = diffs.filter(d => d.diff === minDiff).map(d => d.pid);
          }
+      } else {
+         winners = Array.from(gameState.questionPointReceivers);
       }
 
       if (gameState.boardRiskActive) {
@@ -462,12 +475,20 @@ async function startServer() {
       saveScores();
       io.emit("scoreboard", { scoreboard: gameState.scoreboard });
 
+      gameState.answersRevealed = true;
+      io.emit("board_answer", answerMsg);
+    });
+
+    socket.on("board_next_question", () => {
+      if (socket.id !== gameState.hostId) return;
       gameState.boardCurrentTile = null;
       gameState.boardOpen = false;
       gameState.boardRiskActive = false;
       gameState.questionMode = null;
+      gameState.answersRevealed = false;
+      gameState.questionPointReceivers.clear();
       
-      io.emit("board_answer", answerMsg);
+      io.emit("board_close_question");
     });
 
     socket.on("place_bet", (data) => {
@@ -671,6 +692,8 @@ async function startServer() {
       if (!isHost && !isSelector) return;
       
       if (gameState.boardCurrentTile) return;
+      
+      gameState.questionPointReceivers.clear();
       
       const key = `${category_index}-${tile_index}`;
       if (gameState.boardRevealed.includes(key)) return;

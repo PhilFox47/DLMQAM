@@ -325,7 +325,10 @@ export default function PlayerView() {
               content: tile.mode === 'choice' && tile.correctIndex !== undefined ? 
                 `${["A", "B", "C", "D"][tile.correctIndex]}: ${tile.choices[tile.correctIndex]}` :
                 (tile.mode === 'guess' && tile.correctValue !== undefined ? tile.correctValue : (tile.answer?.content || "???")),
-              category: s.board.categories[cIdx].name
+              category: s.board.categories[cIdx].name,
+              winners: data.winners,
+              buzzRecords: s.buzzRecords,
+              mode: tile.mode
             });
           }
         }
@@ -336,11 +339,23 @@ export default function PlayerView() {
         };
       });
       setShowingCorrectAnswer(true);
-      setTimeout(() => {
-        setGameState(s => ({ ...s, boardCurrentTile: null, boardOpen: false }));
-        setShowingCorrectAnswer(false);
-        setBuzzed(false);
-      }, 5000);
+    });
+
+    socket.on("board_answer_update", (data) => {
+      setLastAnswer((prev: any) => {
+         if (!prev) return prev;
+         return {
+            ...prev,
+            winners: data.winners,
+            buzzRecords: data.buzzRecords
+         };
+      });
+    });
+
+    socket.on("board_close_question", () => {
+      setGameState(s => ({ ...s, boardCurrentTile: null, boardOpen: false }));
+      setShowingCorrectAnswer(false);
+      setBuzzed(false);
     });
 
     socket.on("bets_confirmed", () => {
@@ -435,6 +450,37 @@ export default function PlayerView() {
     }
   }, [tCIdx, tTIdx]);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't intercept if user is typing in an input or textarea
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      
+      if (gameState?.questionMode === "buzzer" && !gameState.buzzLocked && !buzzed) {
+        if (e.key === " " || e.key === "Enter") {
+          e.preventDefault();
+          if (buzzed || gameState.buzzLocked || !gameState.questionMode) return;
+          
+          let answer = answerContent;
+          
+          socket.emit("buzz", { answer });
+          setBuzzed(true);
+
+          if (buzzerSoundRef.current) {
+            buzzerSoundRef.current.currentTime = 0;
+            buzzerSoundRef.current.play().catch(() => {});
+          } else {
+            playTickSound();
+          }
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [gameState?.questionMode, gameState?.buzzLocked, buzzed, answerContent, buzzerSoundRef]);
+
   if (!gameState) {
     return <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center">Connecting to server...</div>;
   }
@@ -462,11 +508,8 @@ export default function PlayerView() {
   };
 
   const myScore = gameState.scoreboard?.[socket.id] || 0;
-  
 
-  
   const renderInputArea = () => {
-    if (showingCorrectAnswer) return null;
     if (gameState.boardCurrentTile && !gameState.boardOpen) {
       if (gameState.boardRiskActive && !gameState.betsConfirmed) {
         if (hasPlacedBet) {
@@ -509,6 +552,53 @@ export default function PlayerView() {
     
     const currentTile = gameState.boardCurrentTile && gameState.board ? 
       gameState.board.categories[gameState.boardCurrentTile[0]]?.tiles[gameState.boardCurrentTile[1]] : null;
+      
+    const renderCorrectAnswerDetails = (tile: any) => {
+      if (!showingCorrectAnswer || !tile) return null;
+      return (
+        <div className="mt-4 pt-4 border-t-4 border-emerald-400 bg-emerald-100 p-4 brutal-border">
+          <h3 className="text-sm font-black uppercase tracking-widest text-emerald-800 mb-2">Correct Answer</h3>
+          <p className="text-2xl font-black uppercase italic tracking-tighter text-emerald-900">
+            {tile.mode === 'choice' && tile.correctIndex !== undefined ? 
+              `${["A", "B", "C", "D"][tile.correctIndex]}: ${tile.choices[tile.correctIndex]}` :
+              (tile.mode === 'guess' && tile.correctValue !== undefined ? tile.correctValue : (tile.answer?.content || "???"))
+            }
+          </p>
+          {tile.answer?.src && (
+            <img src={tile.answer.src} alt="Correct answer" className="mt-4 max-h-48 brutal-border bg-white p-2 object-contain" />
+          )}
+          {lastAnswer?.mode === 'guess' && lastAnswer?.winners && lastAnswer.winners.length > 0 && (
+            <div className="mt-4 pt-4 border-t-2 border-emerald-300">
+               <h4 className="text-xs font-black uppercase tracking-widest text-emerald-800 mb-2">Closest Guesses</h4>
+               <div className="space-y-1">
+                 {lastAnswer.buzzRecords?.filter((r: any) => lastAnswer.winners.includes(r.pid)).map((r: any) => (
+                   <div key={r.pid} className="flex justify-between items-center text-emerald-900 font-bold bg-emerald-200/50 px-3 py-2 brutal-border">
+                     <span className="flex items-center gap-2">
+                       {r.pid === socket.id && <span className="text-lg">⭐</span>}
+                       {gameState.players[r.pid]?.name || "Unknown"}
+                     </span>
+                     <span className="font-black text-xl">{r.answer}</span>
+                   </div>
+                 ))}
+               </div>
+            </div>
+          )}
+          {(lastAnswer?.mode === 'choice' || lastAnswer?.mode === 'text' || lastAnswer?.mode === 'buzzer') && lastAnswer?.winners && lastAnswer.winners.length > 0 && (
+            <div className="mt-4 pt-4 border-t-2 border-emerald-300">
+               <h4 className="text-xs font-black uppercase tracking-widest text-emerald-800 mb-2">Winners</h4>
+               <div className="flex flex-wrap gap-2">
+                 {lastAnswer.winners.map((pid: string) => (
+                   <span key={pid} className={`px-3 py-1 text-sm font-black uppercase brutal-border flex items-center gap-1 ${pid === socket.id ? 'bg-yellow-400 text-black' : 'bg-emerald-300 text-emerald-900'}`}>
+                     {pid === socket.id && <span>⭐</span>}
+                     {gameState.players[pid]?.name || "Unknown"}
+                   </span>
+                 ))}
+               </div>
+            </div>
+          )}
+        </div>
+      );
+    };
     
     switch (gameState.questionMode) {
       case "choice":
@@ -528,13 +618,14 @@ export default function PlayerView() {
                 </button>
               ))}
             </div>
-            {currentTile && currentTile.question && gameState.boardOpen && (
+            {currentTile && (currentTile.question || showingCorrectAnswer) && gameState.boardOpen && (
                <div className="bg-white brutal-border brutal-shadow text-black p-6 w-full text-left">
                   <span className="opacity-50 text-xs font-black uppercase tracking-widest block mb-2">Prompt</span>
-                  <p className="text-2xl font-black">{currentTile.question.content}</p>
-                  {currentTile.question.src && (
+                  <p className="text-2xl font-black">{currentTile.question?.content || "???"}</p>
+                  {currentTile.question?.src && (
                      <img src={currentTile.question.src} alt="Question graphic" className="mt-4 max-h-64 object-contain mx-auto" />
                   )}
+                  {renderCorrectAnswerDetails(currentTile)}
                </div>
             )}
           </div>
@@ -557,6 +648,14 @@ export default function PlayerView() {
                   }
                   setAnswerContent(val);
                }}
+               onKeyDown={e => {
+                 if (e.key === 'Enter') {
+                   e.preventDefault();
+                   if (answerContent.trim() && !buzzed && !gameState.buzzLocked) {
+                     handleBuzz();
+                   }
+                 }
+               }}
                placeholder={gameState.questionMode === "guess" ? "0000" : "QUERY"}
                className="w-full px-6 py-4 bg-yellow-100 brutal-border text-black font-black text-3xl text-center focus:outline-none focus:bg-yellow-200 uppercase tracking-tighter"
             />
@@ -567,12 +666,13 @@ export default function PlayerView() {
             >
               SUBMIT
             </button>
-            {currentTile && currentTile.question && gameState.boardOpen && (
+            {currentTile && (currentTile.question || showingCorrectAnswer) && gameState.boardOpen && (
                <div className="text-left mt-4 pt-4 border-t-4 border-black">
-                  <p className="text-xl font-black uppercase italic">{currentTile.question.content}</p>
-                  {currentTile.question.src && (
+                  <p className="text-xl font-black uppercase italic">{currentTile.question?.content || "???"}</p>
+                  {currentTile.question?.src && (
                      <img src={currentTile.question.src} alt="Question graphic" className="mt-4 max-h-64 object-contain mx-auto" />
                   )}
+                  {renderCorrectAnswerDetails(currentTile)}
                </div>
             )}
           </div>
@@ -581,12 +681,13 @@ export default function PlayerView() {
       default:
         return (
           <div className="flex flex-col flex-col-reverse justify-center items-center mt-8 gap-12">
-            {currentTile && currentTile.question && gameState.boardOpen && (
+            {currentTile && (currentTile.question || showingCorrectAnswer) && gameState.boardOpen && (
                <div className="bg-white brutal-border brutal-shadow text-black p-6 w-full max-w-2xl text-left">
-                  <p className="text-2xl font-black uppercase italic">{currentTile.question.content}</p>
-                  {currentTile.question.src && (
+                  <p className="text-2xl font-black uppercase italic">{currentTile.question?.content || "???"}</p>
+                  {currentTile.question?.src && (
                      <img src={currentTile.question.src} alt="Question graphic" className="mt-4 max-h-64 object-contain mx-auto" />
                   )}
+                  {renderCorrectAnswerDetails(currentTile)}
                </div>
             )}
             <button 
@@ -624,7 +725,14 @@ export default function PlayerView() {
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 1.05 }}
             transition={{ duration: 0.3 }}
-            className="fixed inset-0 bg-yellow-400 z-50 flex flex-col items-center justify-center p-6 text-center"
+            className={clsx(
+              "fixed inset-0 z-50 flex flex-col items-center justify-center p-6 text-center",
+              (() => {
+                 const mode = gameState.board.categories[gameState.boardCurrentTile[0]].tiles[gameState.boardCurrentTile[1]].mode || "buzzer";
+                 const colorMap: Record<string, string> = { choice: "bg-blue-400", guess: "bg-red-400", text: "bg-emerald-400", buzzer: "bg-yellow-400" };
+                 return colorMap[mode] || "bg-yellow-400";
+              })()
+            )}
           >
             <div className="bg-white brutal-border brutal-shadow p-8 sm:p-12 max-w-3xl w-full relative border-8 border-black">
                {gameState.boardRiskActive && (
@@ -633,18 +741,26 @@ export default function PlayerView() {
                <h2 className="text-4xl sm:text-6xl font-black uppercase italic tracking-tighter mb-6 break-words">
                   {gameState.board.categories[gameState.boardCurrentTile[0]].name}
                </h2>
-               <div className="text-7xl sm:text-[10rem] leading-none font-black mb-10 text-blue-600 drop-shadow-[5px_5px_0_rgba(0,0,0,1)]">
+               <div className="text-7xl sm:text-[10rem] leading-none font-black mb-10 text-white drop-shadow-[5px_5px_0_rgba(0,0,0,1)]">
                   {gameState.boardPlayedValues?.[`${gameState.boardCurrentTile[0]}-${gameState.boardCurrentTile[1]}`] || 
                    gameState.board.categories[gameState.boardCurrentTile[0]].tiles[gameState.boardCurrentTile[1]].value * (gameState.doublePointsActive ? 2 : 1)
                   } <span className="text-4xl sm:text-6xl text-black drop-shadow-none tracking-tight">PTS</span>
                </div>
-               <div className="inline-block px-8 py-4 bg-black text-white text-3xl font-black uppercase tracking-widest brutal-border shadow-[6px_6px_0_0_rgba(59,130,246,1)]">
-                 {(() => {
-                    const mode = gameState.board.categories[gameState.boardCurrentTile[0]].tiles[gameState.boardCurrentTile[1]].mode || "buzzer";
-                    const modeMap: Record<string, string> = { buzzer: "Buzzer Question", choice: "Multiple Choice", guess: "Closest Guess", text: "Text Input" };
-                    return modeMap[mode] || "Buzzer Question";
-                 })()}
-               </div>
+               {(() => {
+                  const mode = gameState.board.categories[gameState.boardCurrentTile[0]].tiles[gameState.boardCurrentTile[1]].mode || "buzzer";
+                  const modeMap: Record<string, string> = { buzzer: "Buzzer Question", choice: "Multiple Choice", guess: "Closest Guess", text: "Text Input" };
+                  const colorMap: Record<string, string> = {
+                     choice: "bg-blue-400 text-black",
+                     guess: "bg-red-400 text-black",
+                     text: "bg-emerald-400 text-black",
+                     buzzer: "bg-yellow-400 text-black"
+                  };
+                  return (
+                     <div className={`inline-block px-8 py-4 ${colorMap[mode] || colorMap.buzzer} text-3xl font-black uppercase tracking-widest brutal-border shadow-[6px_6px_0_0_#000]`}>
+                       {modeMap[mode] || "Buzzer Question"}
+                     </div>
+                  );
+               })()}
             </div>
           </motion.div>
         )}
@@ -694,28 +810,28 @@ export default function PlayerView() {
                     Question Types
                   </h2>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="bg-blue-100 p-6 brutal-border relative group hover:-translate-y-1 transition-transform">
+                    <div className="bg-blue-400 p-6 brutal-border relative group hover:-translate-y-1 transition-transform">
                       <div className="absolute -top-3 -left-3 bg-black text-white text-xs font-black px-2 py-1 uppercase tracking-widest transform -rotate-6">Type 1</div>
-                      <h3 className="text-xl font-black uppercase tracking-widest mb-2 mt-2">Multiple Choice</h3>
-                      <p className="font-medium">Easy and Straightforward. I ask a question, you pick one of four answers. Get it right, you get points! Get it wrong, and you'll lose some points instead. If you do not submit an answer, you keep your current score.</p>
+                      <h3 className="text-xl font-black uppercase tracking-widest mb-2 mt-2 text-black">Multiple Choice</h3>
+                      <p className="font-bold text-slate-900">Easy and Straightforward. I ask a question, you pick one of four answers. Get it right, you get points! Get it wrong, and you'll lose some points instead. If you do not submit an answer, you keep your current score.</p>
                     </div>
                     
-                    <div className="bg-pink-100 p-6 brutal-border relative group hover:-translate-y-1 transition-transform">
+                    <div className="bg-red-400 p-6 brutal-border relative group hover:-translate-y-1 transition-transform">
                       <div className="absolute -top-3 -left-3 bg-black text-white text-xs font-black px-2 py-1 uppercase tracking-widest transform -rotate-6">Type 2</div>
-                      <h3 className="text-xl font-black uppercase tracking-widest mb-2 mt-2">Guessing Question</h3>
-                      <p className="font-medium">I am looking for a number. Closest player(s) to correct number wins the points! (All others keep their current score) It's risk free!</p>
+                      <h3 className="text-xl font-black uppercase tracking-widest mb-2 mt-2 text-black">Guessing Question</h3>
+                      <p className="font-bold text-slate-900">I am looking for a number. Closest player(s) to correct number wins the points! (All others keep their current score) It's risk free!</p>
                     </div>
 
-                    <div className="bg-emerald-100 p-6 brutal-border relative group hover:-translate-y-1 transition-transform">
+                    <div className="bg-emerald-400 p-6 brutal-border relative group hover:-translate-y-1 transition-transform">
                       <div className="absolute -top-3 -left-3 bg-black text-white text-xs font-black px-2 py-1 uppercase tracking-widest transform -rotate-6">Type 3</div>
-                      <h3 className="text-xl font-black uppercase tracking-widest mb-2 mt-2">Text Question</h3>
-                      <p className="font-medium">I ask you a question and you have to type in your answer yourself. If I deem the answer correct, you get some points. No points lost if you get it wrong!</p>
+                      <h3 className="text-xl font-black uppercase tracking-widest mb-2 mt-2 text-black">Text Question</h3>
+                      <p className="font-bold text-slate-900">I ask you a question and you have to type in your answer yourself. If I deem the answer correct, you get some points. No points lost if you get it wrong!</p>
                     </div>
 
-                    <div className="bg-amber-100 p-6 brutal-border relative group hover:-translate-y-1 transition-transform">
+                    <div className="bg-yellow-400 p-6 brutal-border relative group hover:-translate-y-1 transition-transform">
                       <div className="absolute -top-3 -left-3 bg-black text-white text-xs font-black px-2 py-1 uppercase tracking-widest transform -rotate-6">Type 4</div>
-                      <h3 className="text-xl font-black uppercase tracking-widest mb-2 mt-2">Buzzer Question</h3>
-                      <p className="font-medium">Here you have to be fast! Who buzzes first has the right to answer the question. Get it right and you earn some points. Get it wrong and you'll lose those points.</p>
+                      <h3 className="text-xl font-black uppercase tracking-widest mb-2 mt-2 text-black">Buzzer Question</h3>
+                      <p className="font-bold text-slate-900">Here you have to be fast! Who buzzes first has the right to answer the question. Get it right and you earn some points. Get it wrong and you'll lose those points.</p>
                     </div>
                   </div>
                 </section>
@@ -811,8 +927,8 @@ export default function PlayerView() {
 
          <div className="flex-1 flex flex-col items-center justify-center w-full min-h-[50vh]">
            {gameState.countdownActive && (
-              <div className="w-full max-w-2xl bg-yellow-400 border-4 border-black border-dashed p-6 mb-8 text-black text-center relative overflow-hidden">
-                <span className="relative z-10 text-6xl font-black italic tracking-tighter">{gameState.countdownSeconds}s</span>
+              <div className="fixed top-24 left-1/2 -translate-x-1/2 w-[90%] max-w-md bg-yellow-400 border-4 border-black border-dashed p-4 text-black text-center z-50 brutal-shadow pointer-events-none">
+                <span className="text-5xl font-black italic tracking-tighter">{gameState.countdownSeconds}s</span>
               </div>
            )}
            {gameState.showStandings && gameState.standingsLeaderboard && !gameState.isGameOver && (
@@ -863,33 +979,6 @@ export default function PlayerView() {
         {gameState.buzzLocked && !showingCorrectAnswer && <p className="bg-black text-yellow-400 brutal-border px-6 py-2 font-black uppercase tracking-widest mb-8 brutal-shadow-sm">🔒 SYSTEM LOCKED</p>}
         {buzzed && !showingCorrectAnswer && <p className="bg-emerald-400 text-black brutal-border px-6 py-2 font-black uppercase tracking-widest mb-8 brutal-shadow-sm">{buzzedPositionText}</p>}
         
-        {showingCorrectAnswer && gameState.boardCurrentTile && gameState.board && (
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="w-full max-w-2xl bg-emerald-400 brutal-border brutal-shadow p-8 mb-8 text-black text-center"
-          >
-            <h3 className="text-sm font-black uppercase tracking-widest mb-4 opacity-70">Correct Answer</h3>
-            {(() => {
-              const [cIdx, tIdx] = gameState.boardCurrentTile;
-              const tile = gameState.board.categories[cIdx]?.tiles[tIdx];
-              return (
-                <div className="flex flex-col items-center">
-                  <p className="text-4xl sm:text-6xl font-black uppercase italic tracking-tighter mb-4">
-                    {tile.mode === 'choice' && tile.correctIndex !== undefined ? 
-                      `${["A", "B", "C", "D"][tile.correctIndex]}: ${tile.choices[tile.correctIndex]}` :
-                      (tile.mode === 'guess' && tile.correctValue !== undefined ? tile.correctValue : (tile.answer?.content || "???"))
-                    }
-                  </p>
-                  {tile.answer?.src && (
-                    <img src={tile.answer.src} alt="Correct answer" className="max-h-48 brutal-border bg-white p-2 object-contain" />
-                  )}
-                </div>
-              );
-            })()}
-          </motion.div>
-        )}
-
         {gameState.finalRoundActive ? (
            <div className="w-full max-w-2xl bg-white brutal-border brutal-shadow p-8 mt-8 text-black text-left">
               <h2 className="text-3xl font-black uppercase italic tracking-tighter mb-4 text-purple-600">Final Round Active</h2>

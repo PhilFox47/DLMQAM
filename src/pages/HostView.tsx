@@ -19,6 +19,7 @@ export default function HostView() {
   const [showingCorrectAnswer, setShowingCorrectAnswer] = useState(false);
   const [lastAnswer, setLastAnswer] = useState<any>(null);
   const [allProfiles, setAllProfiles] = useState<Record<string, any>>({});
+  const [editingScoreId, setEditingScoreId] = useState<string | null>(null);
 
   const playBuzzSound = () => {
     try {
@@ -141,7 +142,10 @@ export default function HostView() {
               content: tile.mode === 'choice' && tile.correctIndex !== undefined ? 
                 `${["A", "B", "C", "D"][tile.correctIndex]}: ${tile.choices[tile.correctIndex]}` :
                 (tile.mode === 'guess' && tile.correctValue !== undefined ? tile.correctValue : (tile.answer?.content || "???")),
-              category: s.board.categories[cIdx].name
+              category: s.board.categories[cIdx].name,
+              winners: data.winners,
+              buzzRecords: s.buzzRecords,
+              mode: tile.mode
             });
           }
         }
@@ -152,10 +156,22 @@ export default function HostView() {
         };
       });
       setShowingCorrectAnswer(true);
-      setTimeout(() => {
-        setGameState(s => ({ ...s, boardCurrentTile: null, boardOpen: false }));
-        setShowingCorrectAnswer(false);
-      }, 5000);
+    });
+
+    socket.on("board_answer_update", (data) => {
+      setLastAnswer((prev: any) => {
+         if (!prev) return prev;
+         return {
+            ...prev,
+            winners: data.winners,
+            buzzRecords: data.buzzRecords
+         };
+      });
+    });
+
+    socket.on("board_close_question", () => {
+      setGameState(s => ({ ...s, boardCurrentTile: null, boardOpen: false }));
+      setShowingCorrectAnswer(false);
     });
 
     socket.on("bets_confirmed", () => {
@@ -433,9 +449,9 @@ export default function HostView() {
                ))}
              </div>
            )}
-           {Object.values(gameState.players).map((p: any) => (
+           {Object.values(gameState.players).sort((a: any, b: any) => (gameState.scoreboard[b.id] || 0) - (gameState.scoreboard[a.id] || 0)).map((p: any) => (
              <div key={p.id} className="bg-white brutal-border brutal-shadow-sm p-2 flex flex-col">
-               <div className="flex justify-between items-center mb-2">
+               <div className="flex justify-between items-center mb-1">
                  <div className="flex items-center gap-2">
                    {allProfiles[p.name]?.avatar ? (
                      <img src={allProfiles[p.name].avatar} alt={p.name} className="w-5 h-5 brutal-border bg-emerald-200 object-cover shrink-0" />
@@ -446,26 +462,35 @@ export default function HostView() {
                    <span className="font-black text-sm uppercase tracking-tighter truncate max-w-[90px]" title={p.name}>{p.name}</span>
                  </div>
                  <div className="flex items-center gap-2">
+                   <button 
+                     onClick={() => editingScoreId === p.id ? setEditingScoreId(null) : setEditingScoreId(p.id)} 
+                     className="text-[10px] font-black uppercase bg-yellow-200 px-1 py-0.5 brutal-border hover:bg-yellow-300"
+                   >
+                     Edit
+                   </button>
                    <span className="font-black text-lg tracking-tighter">{gameState.scoreboard[p.id] || 0}</span>
                    <button onClick={() => socket.emit("remove_player", { player_id: p.id })} className="text-red-600 bg-red-100 p-1 hover:bg-red-200 brutal-border"><X size={12}/></button>
                  </div>
                </div>
-               <div className="flex flex-col gap-1 mt-1 border-t-2 border-black pt-2">
-                 <div className="flex w-full gap-1">
-                   {[100, 200, 300, 400, 500].map(val => (
-                     <button key={`plus-${val}`} onClick={() => handleScore(p.id, gameState.doublePointsActive ? val * 2 : val)} className="flex-1 py-1 px-0.5 text-[10px] sm:text-xs font-black tracking-tighter uppercase bg-emerald-400 brutal-border hover:bg-emerald-300 transition-colors active:translate-y-px">
-                       +{gameState.doublePointsActive ? val * 2 : val}
-                     </button>
-                   ))}
+               {editingScoreId === p.id && (
+                 <div className="flex items-center gap-2 mt-1 border-t-2 border-black pt-2">
+                   <input 
+                     type="number"
+                     placeholder="Points to add/sub (+/-)"
+                     className="flex-1 w-full text-xs p-1 brutal-border font-bold text-center bg-zinc-50"
+                     onKeyDown={(e) => {
+                       if (e.key === 'Enter') {
+                         const val = parseInt(e.currentTarget.value, 10);
+                         if (!isNaN(val)) {
+                           handleScore(p.id, val);
+                           e.currentTarget.value = "";
+                           setEditingScoreId(null);
+                         }
+                       }
+                     }}
+                   />
                  </div>
-                 <div className="flex w-full gap-1">
-                   {[100, 200, 300, 400, 500].map(val => (
-                     <button key={`minus-${val}`} onClick={() => handleScore(p.id, gameState.doublePointsActive ? -val * 2 : -val)} className="flex-1 py-1 px-0.5 text-[10px] sm:text-xs font-black tracking-tighter uppercase bg-red-400 brutal-border hover:bg-red-300 transition-colors active:translate-y-px">
-                       {gameState.doublePointsActive ? -val * 2 : -val}
-                     </button>
-                   ))}
-                 </div>
-               </div>
+               )}
              </div>
            ))}
         </div>
@@ -553,12 +578,25 @@ export default function HostView() {
                       const tile = gameState.board.categories[cIdx]?.tiles?.[tIdx];
                       if (!tile) return null;
                       
+                      const hostColorMap: Record<string, string> = {
+                        choice: "bg-blue-400",
+                        guess: "bg-red-400",
+                        text: "bg-emerald-400",
+                        buzzer: "bg-yellow-400"
+                      };
+                      const bgTileColor = hostColorMap[tile.mode || "buzzer"] || "bg-yellow-400";
+                      
                       return (
-                      <div className="bg-white brutal-border brutal-shadow p-6 mt-6">
+                      <div className={clsx(bgTileColor, "brutal-border brutal-shadow p-6 mt-6")}>
                         <div className="flex justify-between items-start mb-6">
-                          <h2 className="text-2xl font-black uppercase italic tracking-tighter">Mode: {tile.mode || 'buzzer'}</h2>
+                          <h2 className="text-2xl font-black uppercase italic tracking-tighter flex items-center gap-3">
+                             Mode: 
+                             <span className="px-3 py-1 text-sm tracking-widest brutal-border bg-white text-black">
+                               {tile.mode || 'buzzer'}
+                             </span>
+                          </h2>
                           <div className="text-right">
-                             <span className="font-black text-lg bg-yellow-400 px-3 py-1 brutal-border block mb-2">{tile.value} POINTS</span>
+                             <span className="font-black text-lg bg-white text-black px-3 py-1 brutal-border block mb-2">{tile.value} POINTS</span>
                              {tile.double && <span className="font-black text-xs bg-purple-400 text-white px-2 py-1 brutal-border uppercase block mb-1">Double Trouble</span>}
                              {tile.risk && <span className="font-black text-xs bg-red-600 text-white px-2 py-1 brutal-border uppercase block">Risk Wager</span>}
                           </div>
@@ -597,9 +635,38 @@ export default function HostView() {
                         
                         <div className="flex flex-wrap gap-4 mt-6 border-t-4 border-black pt-6">
                           {showingCorrectAnswer ? (
-                            <div className="flex items-center gap-4 bg-emerald-100 p-3 brutal-border w-full justify-center">
-                               <RefreshCw className="animate-spin text-emerald-600" size={24} />
-                               <span className="font-black uppercase tracking-widest text-emerald-800 italic">NEXT ROUND TRANSITION... (5s)</span>
+                            <div className="flex flex-col gap-4 w-full">
+                              <button 
+                                onClick={() => socket.emit("board_next_question")}
+                                className="bg-emerald-500 hover:bg-emerald-400 text-black py-4 px-8 font-black uppercase text-xl brutal-border brutal-shadow active:translate-y-1 transition-all w-full flex items-center justify-center gap-2"
+                              >
+                                NEXT QUESTION
+                              </button>
+                              {lastAnswer?.mode === 'guess' && lastAnswer?.winners && lastAnswer.winners.length > 0 && (
+                                <div className="mt-4 pt-4 border-t-2 border-emerald-300">
+                                   <h4 className="text-xs font-black uppercase tracking-widest text-emerald-800 mb-2">Closest Guesses</h4>
+                                   <div className="space-y-1">
+                                     {lastAnswer.buzzRecords?.filter((r: any) => lastAnswer.winners.includes(r.pid)).map((r: any) => (
+                                       <div key={r.pid} className="flex justify-between items-center text-emerald-900 font-bold bg-emerald-200/50 px-3 py-2 brutal-border">
+                                         <span>{allProfiles[gameState.players[r.pid]?.name]?.name || gameState.players[r.pid]?.name || "Unknown"}</span>
+                                         <span className="font-black text-xl">{r.answer}</span>
+                                       </div>
+                                     ))}
+                                   </div>
+                                </div>
+                              )}
+                              {(lastAnswer?.mode === 'choice' || lastAnswer?.mode === 'text' || lastAnswer?.mode === 'buzzer') && lastAnswer?.winners && lastAnswer.winners.length > 0 && (
+                                <div className="mt-4 pt-4 border-t-2 border-emerald-300">
+                                   <h4 className="text-xs font-black uppercase tracking-widest text-emerald-800 mb-2">Winners</h4>
+                                   <div className="flex flex-wrap gap-2">
+                                     {lastAnswer.winners.map((pid: string) => (
+                                       <span key={pid} className="px-3 py-1 text-sm font-black uppercase brutal-border bg-emerald-300 text-emerald-900">
+                                         {gameState.players[pid]?.name || "Unknown"}
+                                       </span>
+                                     ))}
+                                   </div>
+                                </div>
+                              )}
                             </div>
                           ) : (
                             <>

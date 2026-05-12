@@ -33,10 +33,27 @@ export default function JeopardyBoard({ gameState, isHost }: { gameState: any, i
              const tile = cat.tiles[rowIdx];
              
              const canClick = !isUsed && !isActive && (isHost || gameState.boardSelector === socket.id);
-             let bgClass = "bg-white text-black";
+             const modeColorMap: Record<string, string> = {
+               choice: "bg-blue-400",
+               guess: "bg-red-400",
+               text: "bg-emerald-400",
+               buzzer: "bg-yellow-400"
+             };
+             const tileBg = modeColorMap[tile.mode || "buzzer"] || "bg-yellow-400";
+
+             let bgClass = `${tileBg} text-black`;
              if (isUsed) bgClass = "bg-zinc-200 opacity-50 cursor-not-allowed";
              else if (isActive) bgClass = "bg-black text-white animate-pulse";
-             else if (canClick) bgClass += " hover:bg-yellow-100 cursor-pointer text-black block hover:-translate-y-1 hover:shadow-lg focus:outline-none focus:ring-4 focus:ring-black";
+             else if (canClick) {
+                 const hoverColorMap: Record<string, string> = {
+                     choice: "hover:bg-blue-500",
+                     guess: "hover:bg-red-500",
+                     text: "hover:bg-emerald-500",
+                     buzzer: "hover:bg-yellow-100"
+                 };
+                 const hoverBg = hoverColorMap[tile.mode || "buzzer"] || "hover:bg-yellow-100";
+                 bgClass += ` ${hoverBg} cursor-pointer block hover:-translate-y-1 hover:shadow-lg focus:outline-none focus:ring-4 focus:ring-black`;
+             }
              else bgClass += " cursor-not-allowed";
 
              return (
@@ -54,7 +71,7 @@ export default function JeopardyBoard({ gameState, isHost }: { gameState: any, i
                  </span>
                  {isHost && !isUsed && (
                    <div className="absolute top-2 right-2 flex flex-col gap-1 items-end">
-                     {tile.mode && <span className="px-1 py-0.5 bg-blue-200 text-blue-900 border-2 border-black text-[10px] font-black uppercase leading-none">{tile.mode}</span>}
+                     {tile.mode && <span className={clsx("px-1 py-0.5 border-2 border-black text-[10px] font-black uppercase leading-none", tile.mode === 'choice' ? "bg-blue-400 text-black" : tile.mode === 'guess' ? "bg-red-400 text-black" : tile.mode === 'text' ? "bg-emerald-400 text-black" : "bg-yellow-400 text-black")}>{tile.mode}</span>}
                      {tile.double && <span className="px-1 py-0.5 bg-yellow-400 text-black border-2 border-black text-[10px] font-black uppercase leading-none">2X</span>}
                      {tile.risk && <span className="px-1 py-0.5 bg-red-500 text-white border-2 border-black text-[10px] font-black uppercase leading-none">RISK</span>}
                    </div>
