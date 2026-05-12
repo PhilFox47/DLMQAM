@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { X, Upload, ChevronDown, ChevronUp } from "lucide-react";
+import { clsx } from "clsx";
 
 interface ProfileEditorProps {
   profile: any;
