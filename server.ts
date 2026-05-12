@@ -80,11 +80,16 @@ async function startServer() {
       const profiles = JSON.parse(profilesData);
       
       game.leaderboard.forEach(({ player_name, score }: any, index: number) => {
-         if (profiles[player_name] && profiles[player_name].stats) {
-            profiles[player_name].stats.total_points = Math.max(0, profiles[player_name].stats.total_points - score);
-            profiles[player_name].stats.games_played = Math.max(0, profiles[player_name].stats.games_played - 1);
-            if (index === 0) {
-               profiles[player_name].stats.wins = Math.max(0, (profiles[player_name].stats.wins || 0) - 1);
+         if (profiles[player_name]) {
+            if (profiles[player_name].stats) {
+               profiles[player_name].stats.total_points = Math.max(0, profiles[player_name].stats.total_points - score);
+               profiles[player_name].stats.games_played = Math.max(0, profiles[player_name].stats.games_played - 1);
+               if (index === 0) {
+                  profiles[player_name].stats.wins = Math.max(0, (profiles[player_name].stats.wins || 0) - 1);
+               }
+            }
+            if (profiles[player_name].history) {
+               profiles[player_name].history = profiles[player_name].history.filter((h: any) => h.id !== id);
             }
          }
       });

@@ -457,34 +457,67 @@ export default function PlayerView() {
        setShowQuestionIntro(true);
        
        const tile = gameState?.board?.categories?.[tCIdx]?.tiles?.[tTIdx];
-       if (tile && 'speechSynthesis' in window) {
-         window.speechSynthesis.cancel();
-         
+       if (tile) {
          const mode = tile.mode || "buzzer";
-         let primaryPhrase = "";
-         if (mode === "buzzer") primaryPhrase = "BUZZ FAST!";
-         else if (mode === "guess") primaryPhrase = "GIVE ME YOUR GUESS!";
-         else if (mode === "choice") primaryPhrase = "CHOOSE WISELY!";
-         else if (mode === "text") primaryPhrase = "GET READY TO TYPE!";
+         const isDouble = tile.double || gameState?.doublePointsActive;
+         const isRisk = tile.risk || gameState?.boardRiskActive;
          
-         let secondaryPhrase = "";
-         if (tile.double || gameState?.doublePointsActive) {
-            secondaryPhrase = " FOR DOUBLE THE POINTS!!";
-         } else if (tile.risk || gameState?.boardRiskActive) {
-            secondaryPhrase = " BUT MAKE IT RISKY!";
+         try {
+            const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+            if (AudioContextClass) {
+               const ctx = new AudioContextClass();
+               const playTone = (freq: number, type: OscillatorType, time: number, duration: number, vol = 0.5) => {
+                  const osc = ctx.createOscillator();
+                  const gain = ctx.createGain();
+                  osc.connect(gain);
+                  gain.connect(ctx.destination);
+                  osc.type = type;
+                  osc.frequency.setValueAtTime(freq, ctx.currentTime + time);
+                  gain.gain.setValueAtTime(vol, ctx.currentTime + time);
+                  gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + time + duration);
+                  osc.start(ctx.currentTime + time);
+                  osc.stop(ctx.currentTime + time + duration);
+               };
+
+               if (mode === "buzzer") {
+                  playTone(800, 'square', 0, 0.2);
+                  playTone(1200, 'square', 0.1, 0.4);
+               } else if (mode === "guess") {
+                  const osc = ctx.createOscillator();
+                  const gain = ctx.createGain();
+                  osc.connect(gain);
+                  gain.connect(ctx.destination);
+                  osc.type = 'sine';
+                  osc.frequency.setValueAtTime(300, ctx.currentTime);
+                  osc.frequency.exponentialRampToValueAtTime(800, ctx.currentTime + 0.4);
+                  gain.gain.setValueAtTime(0.5, ctx.currentTime);
+                  gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+                  osc.start();
+                  osc.stop(ctx.currentTime + 0.4);
+               } else if (mode === "choice") {
+                  playTone(523.25, 'triangle', 0, 0.2);
+                  playTone(659.25, 'triangle', 0.15, 0.2);
+                  playTone(783.99, 'triangle', 0.3, 0.4);
+               } else if (mode === "text") {
+                  playTone(1000, 'square', 0, 0.1, 0.2);
+                  playTone(1200, 'square', 0.1, 0.1, 0.2);
+                  playTone(1000, 'square', 0.2, 0.1, 0.2);
+                  playTone(1500, 'square', 0.3, 0.2, 0.2);
+               }
+
+               let modStart = 0.6;
+               if (isDouble) {
+                  playTone(1200, 'sine', modStart, 0.3, 0.6);
+                  playTone(1600, 'sine', modStart + 0.15, 0.5, 0.6);
+               }
+               if (isRisk) {
+                  playTone(150, 'sawtooth', modStart + (isDouble ? 0.3 : 0), 0.8, 0.5);
+                  playTone(155, 'sawtooth', modStart + (isDouble ? 0.3 : 0), 0.8, 0.5);
+               }
+            }
+         } catch(e) {
+            console.error("Audio block failed", e);
          }
-         
-         const utterance = new SpeechSynthesisUtterance(primaryPhrase + secondaryPhrase);
-         utterance.rate = 1.1;
-         utterance.pitch = 0.8;
-         
-         const voices = window.speechSynthesis.getVoices();
-         const englishVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Male') || v.name.includes('Google US English')));
-         if (englishVoice) {
-           utterance.voice = englishVoice;
-         }
-                  
-         window.speechSynthesis.speak(utterance);
        }
 
        const timer = setTimeout(() => setShowQuestionIntro(false), 3000);

@@ -7,6 +7,7 @@ import clsx from "clsx";
 
 import JeopardyBoard from "./JeopardyBoard";
 import ProfilesManagement from "./ProfilesManagement";
+import GlobalGameHistory from "./GlobalGameHistory";
 
 export default function HostView() {
   const [params] = useSearchParams();
@@ -16,6 +17,7 @@ export default function HostView() {
 
   const [gameState, setGameState] = useState<any>(null);
   const [showProfiles, setShowProfiles] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [showingCorrectAnswer, setShowingCorrectAnswer] = useState(false);
   const [lastAnswer, setLastAnswer] = useState<any>(null);
   const [allProfiles, setAllProfiles] = useState<Record<string, any>>({});
@@ -331,6 +333,7 @@ export default function HostView() {
   return (
     <div className="min-h-screen bg-yellow-400 text-black flex flex-col md:flex-row selection:bg-white font-sans relative">
       {showProfiles && <ProfilesManagement onClose={() => setShowProfiles(false)} />}
+      {showHistory && <GlobalGameHistory onClose={() => setShowHistory(false)} />}
       <div className="w-full md:w-80 bg-white brutal-border brutal-shadow m-4 md:mr-0 flex flex-col items-stretch">
         <div className="p-4 border-b-4 border-black bg-black text-white">
           <h2 className="text-xl font-black italic tracking-tighter uppercase mb-4 flex items-center gap-2">
@@ -386,23 +389,30 @@ export default function HostView() {
             <button 
                onClick={() => { socket.emit("end_game") }}
                className={clsx(
-                 "flex items-center justify-center gap-1 py-2 text-xs font-black uppercase tracking-widest brutal-border shadow-[2px_2px_0_0_#000] active:translate-y-px active:shadow-none transition-colors",
-                 gameState.isGameOver 
-                   ? "bg-black text-white hover:bg-zinc-800" 
-                   : "bg-red-600 text-white hover:bg-red-500"
+                 "flex items-center justify-center gap-1 py-2 text-xs font-black uppercase tracking-widest brutal-border shadow-[2px_2px_0_0_#000] active:translate-y-px active:shadow-none hover:opacity-90 transition-colors",
+                 gameState.isGameOver ? "bg-emerald-400 text-black" : "bg-red-400 text-black"
                )}
             >
-              {gameState.isGameOver ? "GAME ENDED" : "END GAME"}
+              {gameState.isGameOver ? "RESUME" : "END GAME"}
             </button>
-            {gameState.board && gameState.board.finalRound && (
+            <button 
+               onClick={() => { setShowHistory(true) }}
+               className="flex items-center justify-center gap-1 py-2 text-xs bg-orange-400 text-black font-black uppercase tracking-widest brutal-border shadow-[2px_2px_0_0_#000] active:translate-y-px active:shadow-none hover:bg-orange-300 transition-colors"
+            >
+              HISTORY
+            </button>
+          </div>
+          
+          {gameState.board && gameState.board.finalRound && (
+             <div className="mb-4">
                <button 
                   onClick={() => socket.emit("start_final_round")}
-                  className="col-span-2 flex items-center justify-center gap-1 py-2 text-xs bg-black text-white font-black uppercase tracking-widest brutal-border shadow-[2px_2px_0_0_#eab308] active:translate-y-px active:shadow-none hover:bg-zinc-800 transition-colors"
+                  className="w-full flex items-center justify-center gap-1 py-2 text-xs bg-black text-white font-black uppercase tracking-widest brutal-border shadow-[2px_2px_0_0_#eab308] active:translate-y-px active:shadow-none hover:bg-zinc-800 transition-colors"
                >
                  <Play size={14} /> START FINAL ROUND
                </button>
-            )}
-          </div>
+             </div>
+          )}
           
           <h3 className="text-xs uppercase font-black text-zinc-400 tracking-widest mb-1">Connected Nodes</h3>
         </div>
