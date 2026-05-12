@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
+import clsx from "clsx";
 import { socket } from "../lib/socket";
 import JeopardyBoard from "./JeopardyBoard";
 import { Edit2, HelpCircle, X } from "lucide-react";
