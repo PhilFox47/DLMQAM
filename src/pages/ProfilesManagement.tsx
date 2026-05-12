@@ -65,7 +65,7 @@ export default function ProfilesManagement({ onClose }: { onClose?: () => void }
               <h2 className="text-3xl font-black uppercase tracking-tighter mb-4 truncate">{p.name}</h2>
               <div className="space-y-2 border-t-4 border-black pt-4 mt-auto">
                 <div className="flex justify-between items-center">
-                  <span className="text-xs font-black uppercase tracking-widest text-zinc-500">Net XP</span>
+                  <span className="text-xs font-black uppercase tracking-widest text-zinc-500">Total Points</span>
                   <span className="text-xl font-black">{p.stats?.total_points || 0}</span>
                 </div>
                 <div className="flex justify-between items-center">

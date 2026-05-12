@@ -269,6 +269,38 @@ async function startServer() {
         if (existingPid && existingPid !== socket.id) {
           delete gameState.players[existingPid];
           delete gameState.scoreboard[existingPid];
+          
+          gameState.buzzRecords.forEach(r => { if (r.pid === existingPid) r.pid = socket.id; });
+          
+          if (gameState.riskBets[existingPid] !== undefined) {
+             gameState.riskBets[socket.id] = gameState.riskBets[existingPid];
+             delete gameState.riskBets[existingPid];
+          }
+          
+          if (gameState.questionPointReceivers.has(existingPid)) {
+             gameState.questionPointReceivers.delete(existingPid);
+             gameState.questionPointReceivers.add(socket.id);
+          }
+          
+          gameState.finalistIds = gameState.finalistIds.map(id => id === existingPid ? socket.id : id);
+          gameState.finalTurnOrder = gameState.finalTurnOrder.map(id => id === existingPid ? socket.id : id);
+          
+          ['quickfire', 'turnlist', 'discussion'].forEach(key => {
+             const stats = (gameState.finalStats as any)[key];
+             if (stats && stats[existingPid] !== undefined) {
+                stats[socket.id] = stats[existingPid];
+                delete stats[existingPid];
+             }
+          });
+          
+          gameState.tieBreakerPlayers = gameState.tieBreakerPlayers.map(id => id === existingPid ? socket.id : id);
+          if (gameState.tieBreakerGuesses[existingPid] !== undefined) {
+             gameState.tieBreakerGuesses[socket.id] = gameState.tieBreakerGuesses[existingPid];
+             delete gameState.tieBreakerGuesses[existingPid];
+          }
+
+          if (gameState.boardSelector === existingPid) gameState.boardSelector = socket.id;
+
           emitToHost("player_removed", { player_id: existingPid, scoreboard: gameState.scoreboard });
         }
 

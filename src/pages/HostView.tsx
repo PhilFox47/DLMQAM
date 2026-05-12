@@ -541,7 +541,10 @@ export default function HostView() {
                            <button onClick={() => socket.emit("stop_countdown")} className="px-4 py-1 bg-red-400 text-white font-black brutal-border hover:bg-black transition-colors">Stop</button>
                         </div>
                      ) : (
-                        <button onClick={() => socket.emit("start_countdown", { seconds: 10 })} className="bg-yellow-400 p-4 brutal-border font-black uppercase tracking-widest hover:bg-yellow-300">Start 10s Timer</button>
+                        <div className="flex gap-2">
+                           <button onClick={() => socket.emit("start_countdown", { seconds: 10 })} className="bg-yellow-400 p-4 brutal-border font-black uppercase tracking-widest hover:bg-yellow-300">10s Timer</button>
+                           <button onClick={() => socket.emit("start_countdown", { seconds: 5 })} className="bg-yellow-400 p-4 brutal-border font-black uppercase tracking-widest hover:bg-yellow-300">5s Timer</button>
+                        </div>
                      )}
                    </div>
                    
@@ -712,12 +715,20 @@ export default function HostView() {
                                        <button onClick={() => socket.emit("stop_countdown")} className="px-4 py-1 bg-red-400 text-white font-black brutal-border hover:bg-black transition-colors">Stop</button>
                                     </div>
                                   ) : (
-                                    <button 
-                                      onClick={() => socket.emit("start_countdown", { seconds: 10 })}
-                                      className="bg-yellow-400 text-black brutal-border hover:brutal-shadow-sm px-6 py-3 font-black uppercase tracking-widest active:translate-y-px transition-all shadow-[2px_2px_0_0_#000]"
-                                    >
-                                      10s Timer
-                                    </button>
+                                    <div className="flex gap-2 w-full max-w-md">
+                                      <button 
+                                        onClick={() => socket.emit("start_countdown", { seconds: 10 })}
+                                        className="flex-1 bg-yellow-400 text-black brutal-border hover:brutal-shadow-sm px-6 py-3 font-black uppercase tracking-widest active:translate-y-px transition-all shadow-[2px_2px_0_0_#000]"
+                                      >
+                                        10s
+                                      </button>
+                                      <button 
+                                        onClick={() => socket.emit("start_countdown", { seconds: 5 })}
+                                        className="flex-1 bg-yellow-400 text-black brutal-border hover:brutal-shadow-sm px-6 py-3 font-black uppercase tracking-widest active:translate-y-px transition-all shadow-[2px_2px_0_0_#000]"
+                                      >
+                                        5s
+                                      </button>
+                                    </div>
                                   )}
                                 </>
                               )}

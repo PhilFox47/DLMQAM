@@ -83,7 +83,7 @@ export default function ProfileEditor({ profile, onClose, onSave, isHost = false
             <div className="pt-4 border-t-4 border-black space-y-2 mt-4">
               <h3 className="font-black uppercase tracking-widest text-sm text-zinc-500 mb-2">Statistics</h3>
               <div className="flex justify-between items-center">
-                <span className="text-sm font-bold uppercase">Net XP</span>
+                <span className="text-sm font-bold uppercase">Total Points</span>
                 <span className="text-lg font-black">{profile.stats.total_points || 0}</span>
               </div>
               <div className="flex justify-between items-center">
@@ -121,7 +121,7 @@ export default function ProfileEditor({ profile, onClose, onSave, isHost = false
                            <span className="truncate max-w-[200px] text-zinc-600">
                              {game.categories?.join(", ") || "No categories"}
                            </span>
-                           <span className="font-black">{game.score} XP</span>
+                           <span className="font-black">{game.score} PTS</span>
                          </div>
                        </button>
 

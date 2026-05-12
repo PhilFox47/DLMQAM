@@ -233,6 +233,22 @@ export default function PlayerView() {
 
     socket.on("game_state", (state) => {
       setGameState(state);
+      const myRecord = state.buzzRecords?.find((r: any) => r.pid === socket.id);
+      if (myRecord) {
+        setBuzzed(true);
+        if (myRecord.answer) {
+          setAnswerContent(myRecord.answer);
+        }
+      } else {
+        setBuzzed(false);
+        setAnswerContent("");
+      }
+      if (state.riskBets?.[socket.id] !== undefined) {
+        setHasPlacedBet(true);
+        setRiskBet(state.riskBets[socket.id]);
+      } else {
+        setHasPlacedBet(false);
+      }
     });
 
     socket.on("registered", (data) => {
@@ -426,7 +442,29 @@ export default function PlayerView() {
 
     socket.on("countdown_start", ({ seconds }) => setGameState(s => ({ ...s, countdownActive: true, countdownSeconds: seconds })));
     socket.on("countdown_update", ({ seconds }) => setGameState(s => ({ ...s, countdownSeconds: seconds })));
-    socket.on("countdown_end", () => setGameState(s => ({ ...s, countdownActive: false })));
+    socket.on("countdown_end", () => {
+       setGameState(s => ({ ...s, countdownActive: false }));
+       try {
+           const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+           if (AudioContextClass) {
+              const ctx = new AudioContextClass();
+              
+              const osc = ctx.createOscillator();
+              const gain = ctx.createGain();
+              osc.connect(gain);
+              gain.connect(ctx.destination);
+              
+              osc.type = 'sawtooth';
+              osc.frequency.setValueAtTime(150, ctx.currentTime);
+              
+              gain.gain.setValueAtTime(0.5, ctx.currentTime);
+              gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 1.0);
+              
+              osc.start(ctx.currentTime);
+              osc.stop(ctx.currentTime + 1.0);
+           }
+       } catch (e) { console.error("Audio error", e) }
+    });
     socket.on("countdown_stop", () => setGameState(s => ({ ...s, countdownActive: false })));
 
     return () => {
