@@ -226,13 +226,20 @@ export default function BoardEditor() {
                     <label className="block text-sm font-black uppercase tracking-widest text-zinc-500 mb-3 border-b-4 border-black pb-2">Target Float/Int</label>
                     <input 
                       type="text" 
-                      inputMode="numeric"
-                      pattern="[0-9]*"
+                      inputMode="decimal"
+                      pattern="[0-9.,\-]*"
                       value={editingTile.correctValue !== undefined ? editingTile.correctValue : ''} 
                       onChange={e => {
-                         const val = e.target.value.replace(/[^0-9]/g, '');
-                         setEditingTile({...editingTile, correctValue: val ? parseInt(val) : undefined})
+                         let val = e.target.value.replace(/[^0-9.,\-]/g, '');
+                         val = val.replace(',', '.');
+                         setEditingTile({...editingTile, correctValue: val === '' || isNaN(Number(val)) && val !== '-' && val !== '.' ? undefined : val})
                       }} 
+                      onBlur={e => {
+                          if (typeof editingTile.correctValue === 'string') {
+                              const num = parseFloat(editingTile.correctValue);
+                              setEditingTile({...editingTile, correctValue: isNaN(num) ? undefined : num});
+                          }
+                      }}
                       className="w-full bg-white brutal-border text-black font-black text-2xl p-4 focus:outline-none focus:bg-yellow-50 text-center" 
                       placeholder="0000" 
                     />

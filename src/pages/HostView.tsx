@@ -16,7 +16,40 @@ export default function HostView() {
 
   const [gameState, setGameState] = useState<any>(null);
   const [showProfiles, setShowProfiles] = useState(false);
+  const [showingCorrectAnswer, setShowingCorrectAnswer] = useState(false);
+  const [lastAnswer, setLastAnswer] = useState<any>(null);
   const [allProfiles, setAllProfiles] = useState<Record<string, any>>({});
+
+  const playBuzzSound = () => {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(1200, audioCtx.currentTime + 0.1);
+      
+      gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+      
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.1);
+    } catch (e) {}
+  };
+
+  const prevBuzzCountRef = useRef(0);
+
+  useEffect(() => {
+    if (gameState?.buzzRecords) {
+      if (gameState.buzzRecords.length > prevBuzzCountRef.current) {
+        playBuzzSound();
+      }
+      prevBuzzCountRef.current = gameState.buzzRecords.length;
+    }
+  }, [gameState?.buzzRecords]);
 
   const fetchProfiles = () => {
     fetch("/api/profiles")
@@ -70,7 +103,9 @@ export default function HostView() {
         boardPlayedValues: playedValues || {},
         boardCurrentTile: null,
         boardOpen: false,
-        boardRiskActive: false
+        boardRiskActive: false,
+        betsConfirmed: false,
+        riskBets: {}
       }));
     });
 
@@ -86,7 +121,9 @@ export default function HostView() {
         boardRiskActive: !!tile.risk,
         boardOpen: false,
         buzzRecords: [],
-        buzzLocked: false
+        buzzLocked: false,
+        betsConfirmed: false,
+        riskBets: {}
       }));
     });
 
@@ -95,20 +132,38 @@ export default function HostView() {
     });
 
     socket.on("board_answer", (data) => {
-      setGameState(s => ({ 
-        ...s, 
-        boardRevealed: data.revealed, 
-        boardPlayedValues: data.playedValues || s.boardPlayedValues || {},
-        boardCurrentTile: null, 
-        boardOpen: false, 
-        boardRiskActive: false,
-        riskBets: {},
-        questionMode: null
-      }));
+      setGameState(s => {
+        if (s.boardCurrentTile && s.board) {
+          const [cIdx, tIdx] = s.boardCurrentTile;
+          const tile = s.board.categories[cIdx]?.tiles[tIdx];
+          if (tile) {
+            setLastAnswer({
+              content: tile.mode === 'choice' && tile.correctIndex !== undefined ? 
+                `${["A", "B", "C", "D"][tile.correctIndex]}: ${tile.choices[tile.correctIndex]}` :
+                (tile.mode === 'guess' && tile.correctValue !== undefined ? tile.correctValue : (tile.answer?.content || "???")),
+              category: s.board.categories[cIdx].name
+            });
+          }
+        }
+        return { 
+          ...s, 
+          boardRevealed: data.revealed, 
+          boardPlayedValues: data.playedValues || s.boardPlayedValues || {}
+        };
+      });
+      setShowingCorrectAnswer(true);
+      setTimeout(() => {
+        setGameState(s => ({ ...s, boardCurrentTile: null, boardOpen: false }));
+        setShowingCorrectAnswer(false);
+      }, 5000);
     });
 
     socket.on("bets_confirmed", () => {
       setGameState(s => ({ ...s, betsConfirmed: true }));
+    });
+
+    socket.on("bet_update", ({ player_id, bet }) => {
+      setGameState(s => ({ ...s, riskBets: { ...(s?.riskBets || {}), [player_id]: bet } }));
     });
 
     socket.on("standings", ({ leaderboard }) => {
@@ -117,7 +172,11 @@ export default function HostView() {
     });
 
     socket.on("game_over", ({ leaderboard }) => {
-      setGameState(s => ({ ...s, showGameOver: true, gameOverLeaderboard: leaderboard }));
+      setGameState(s => ({ ...s, showGameOver: true, isGameOver: true, gameOverLeaderboard: leaderboard }));
+    });
+
+    socket.on("resume_game", () => {
+      setGameState(s => ({ ...s, showGameOver: false, isGameOver: false }));
     });
 
     socket.on("final_round_started", ({ finalists }) => {
@@ -310,9 +369,14 @@ export default function HostView() {
             </button>
             <button 
                onClick={() => { socket.emit("end_game") }}
-               className="flex items-center justify-center gap-1 py-2 text-xs bg-red-600 text-white font-black uppercase tracking-widest brutal-border shadow-[2px_2px_0_0_#000] active:translate-y-px active:shadow-none hover:bg-red-500 transition-colors"
+               className={clsx(
+                 "flex items-center justify-center gap-1 py-2 text-xs font-black uppercase tracking-widest brutal-border shadow-[2px_2px_0_0_#000] active:translate-y-px active:shadow-none transition-colors",
+                 gameState.isGameOver 
+                   ? "bg-black text-white hover:bg-zinc-800" 
+                   : "bg-red-600 text-white hover:bg-red-500"
+               )}
             >
-              END GAME
+              {gameState.isGameOver ? "GAME ENDED" : "END GAME"}
             </button>
             {gameState.board && gameState.board.finalRound && (
                <button 
@@ -327,23 +391,43 @@ export default function HostView() {
           <h3 className="text-xs uppercase font-black text-zinc-400 tracking-widest mb-1">Connected Nodes</h3>
         </div>
         <div className="flex-1 overflow-y-auto px-4 py-4 bg-zinc-50 space-y-3">
-           {gameState.showStandings && gameState.standingsLeaderboard && (
+           {gameState.showStandings && gameState.standingsLeaderboard && !gameState.isGameOver && (
              <div className="bg-blue-200 brutal-border brutal-shadow-sm p-3 mb-2">
                <h3 className="text-sm font-black uppercase italic mb-2">Current Standings</h3>
                {gameState.standingsLeaderboard.map((entry: any, i: number) => (
-                 <div key={entry.player_id} className="flex justify-between font-bold text-xs">
-                   <span><span className={i === 0 ? "text-yellow-600" : i === 1 ? "text-zinc-500" : i === 2 ? "text-amber-700" : "text-black"}>{i+1}.</span> {entry.player_name}</span>
+                 <div key={entry.player_id} className="flex justify-between font-bold text-xs items-center mb-1 last:mb-0">
+                   <div className="flex items-center gap-2">
+                     <span className={i === 0 ? "text-yellow-600" : i === 1 ? "text-zinc-500" : i === 2 ? "text-amber-700" : "text-black"}>{i+1}.</span>
+                     {allProfiles[entry.player_name]?.avatar ? (
+                       <img src={allProfiles[entry.player_name].avatar} alt={entry.player_name} className="w-4 h-4 brutal-border bg-emerald-200 object-cover shrink-0" />
+                     ) : (
+                       <div className="w-4 h-4 brutal-border bg-zinc-200 flex items-center justify-center text-[8px] font-black uppercase text-black shrink-0">{entry.player_name[0] || '?'}</div>
+                     )}
+                     <span className="truncate max-w-[80px]" title={entry.player_name}>{entry.player_name}</span>
+                   </div>
                    <span>{entry.score}</span>
                  </div>
                ))}
              </div>
            )}
-           {gameState.showGameOver && gameState.gameOverLeaderboard && (
-             <div className="bg-red-200 brutal-border brutal-shadow-sm p-3 mb-2">
-               <h3 className="text-lg font-black uppercase italic mb-2 text-red-600">Game Over</h3>
-               {gameState.gameOverLeaderboard.map((entry: any, i: number) => (
-                 <div key={entry.player_id} className="flex justify-between font-bold text-sm text-black">
-                   <span><span className={i === 0 ? "text-yellow-600" : i === 1 ? "text-zinc-500" : i === 2 ? "text-amber-700" : "text-black"}>{i+1}.</span> {entry.player_name}</span>
+           {gameState.isGameOver && (
+             <div className="bg-red-200 brutal-border brutal-shadow-sm p-4 mb-2">
+               <h3 className="text-xl font-black uppercase italic mb-3 text-red-600 text-center">Game Over</h3>
+               {Object.keys(gameState?.players || {}).map(pid => ({
+                  player_id: pid,
+                  player_name: gameState.players[pid].name,
+                  score: gameState.scoreboard[pid] || 0
+               })).sort((a,b) => b.score - a.score).map((entry: any, i: number) => (
+                 <div key={entry.player_id} className={`flex justify-between font-bold items-center mb-2 last:mb-0 ${i === 0 ? "text-lg text-yellow-600 border-2 border-yellow-600 p-2 bg-yellow-100 italic" : "text-sm text-black"}`}>
+                   <div className="flex items-center gap-2">
+                     <span className={i === 0 ? "text-yellow-600" : i === 1 ? "text-zinc-500" : i === 2 ? "text-amber-700" : "text-black"}>{i+1}.</span>
+                     {allProfiles[entry.player_name]?.avatar ? (
+                       <img src={allProfiles[entry.player_name].avatar} alt={entry.player_name} className={`${i === 0 ? "w-8 h-8" : "w-5 h-5"} brutal-border bg-emerald-200 object-cover shrink-0`} />
+                     ) : (
+                       <div className={`${i === 0 ? "w-8 h-8 text-xs" : "w-5 h-5 text-[10px]"} brutal-border bg-zinc-200 flex items-center justify-center font-black uppercase text-black shrink-0`}>{entry.player_name[0] || '?'}</div>
+                     )}
+                     <span className="truncate max-w-[100px]" title={entry.player_name}>{entry.player_name}</span>
+                   </div>
                    <span>{entry.score}</span>
                  </div>
                ))}
@@ -456,6 +540,13 @@ export default function HostView() {
                      </div>
                   )}
 
+                  {lastAnswer && !gameState.boardCurrentTile && !gameState.finalRoundActive && (
+                    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-black text-white px-6 py-2 brutal-border brutal-shadow-sm flex items-center gap-3 z-40">
+                       <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">Last Answer</span>
+                       <span className="font-bold text-sm truncate max-w-[300px]">{lastAnswer.category}: {lastAnswer.content}</span>
+                    </div>
+                  )}
+
                   <div className={clsx("flex flex-col gap-6", gameState.boardCurrentTile ? "w-full" : "w-full xl:w-1/2")}>
                     {gameState.boardCurrentTile ? (() => {
                       const [cIdx, tIdx] = gameState.boardCurrentTile;
@@ -505,44 +596,53 @@ export default function HostView() {
                         </div>
                         
                         <div className="flex flex-wrap gap-4 mt-6 border-t-4 border-black pt-6">
-                          {!gameState.boardOpen && (
-                            <button 
-                              disabled={tile.risk && !gameState.betsConfirmed}
-                              onClick={() => socket.emit("board_show_question")}
-                              className="bg-blue-400 disabled:bg-zinc-300 disabled:text-zinc-500 text-black brutal-border hover:brutal-shadow-sm px-6 py-3 font-black uppercase tracking-widest active:translate-y-px transition-all shadow-[2px_2px_0_0_#000]"
-                            >
-                              Reveal Prompt
-                            </button>
-                          )}
-                          {tile.risk && !gameState.boardOpen && !gameState.betsConfirmed && (
-                            <button 
-                              onClick={() => socket.emit("confirm_bets")}
-                              className="bg-red-500 text-white brutal-border hover:brutal-shadow-sm px-6 py-3 font-black uppercase tracking-widest active:translate-y-px transition-all shadow-[2px_2px_0_0_#000]"
-                            >
-                              Confirm Wagers
-                            </button>
-                          )}
-                          {gameState.boardOpen && (
+                          {showingCorrectAnswer ? (
+                            <div className="flex items-center gap-4 bg-emerald-100 p-3 brutal-border w-full justify-center">
+                               <RefreshCw className="animate-spin text-emerald-600" size={24} />
+                               <span className="font-black uppercase tracking-widest text-emerald-800 italic">NEXT ROUND TRANSITION... (5s)</span>
+                            </div>
+                          ) : (
                             <>
-                              <button 
-                                onClick={() => socket.emit("board_reveal_answer")}
-                                className="bg-emerald-400 text-black brutal-border hover:brutal-shadow-sm px-6 py-3 font-black uppercase tracking-widest active:translate-y-px transition-all shadow-[2px_2px_0_0_#000]"
-                              >
-                                Reveal Answer & Complete
-                              </button>
-                              
-                              {gameState.countdownActive ? (
-                                <div className="flex items-center gap-4 border-2 border-black p-2 bg-yellow-300 w-fit">
-                                   <span className="font-black text-xl">{gameState.countdownSeconds}s</span>
-                                   <button onClick={() => socket.emit("stop_countdown")} className="px-4 py-1 bg-red-400 text-white font-black brutal-border hover:bg-black transition-colors">Stop</button>
-                                </div>
-                              ) : (
+                              {!gameState.boardOpen && (
                                 <button 
-                                  onClick={() => socket.emit("start_countdown", { seconds: 10 })}
-                                  className="bg-yellow-400 text-black brutal-border hover:brutal-shadow-sm px-6 py-3 font-black uppercase tracking-widest active:translate-y-px transition-all shadow-[2px_2px_0_0_#000]"
+                                  disabled={tile.risk && !gameState.betsConfirmed}
+                                  onClick={() => socket.emit("board_show_question")}
+                                  className="bg-blue-400 disabled:bg-zinc-300 disabled:text-zinc-500 text-black brutal-border hover:brutal-shadow-sm px-6 py-3 font-black uppercase tracking-widest active:translate-y-px transition-all shadow-[2px_2px_0_0_#000]"
                                 >
-                                  10s Timer
+                                  Reveal Prompt
                                 </button>
+                              )}
+                              {tile.risk && !gameState.boardOpen && !gameState.betsConfirmed && (
+                                <button 
+                                  onClick={() => socket.emit("confirm_bets")}
+                                  className="bg-red-500 text-white brutal-border hover:brutal-shadow-sm px-6 py-3 font-black uppercase tracking-widest active:translate-y-px transition-all shadow-[2px_2px_0_0_#000]"
+                                >
+                                  Confirm Wagers
+                                </button>
+                              )}
+                              {gameState.boardOpen && (
+                                <>
+                                  <button 
+                                    onClick={() => socket.emit("board_reveal_answer")}
+                                    className="bg-emerald-400 text-black brutal-border hover:brutal-shadow-sm px-6 py-3 font-black uppercase tracking-widest active:translate-y-px transition-all shadow-[2px_2px_0_0_#000]"
+                                  >
+                                    Reveal Answer & Complete
+                                  </button>
+                                  
+                                  {gameState.countdownActive ? (
+                                    <div className="flex items-center gap-4 border-2 border-black p-2 bg-yellow-300 w-fit">
+                                       <span className="font-black text-xl">{gameState.countdownSeconds}s</span>
+                                       <button onClick={() => socket.emit("stop_countdown")} className="px-4 py-1 bg-red-400 text-white font-black brutal-border hover:bg-black transition-colors">Stop</button>
+                                    </div>
+                                  ) : (
+                                    <button 
+                                      onClick={() => socket.emit("start_countdown", { seconds: 10 })}
+                                      className="bg-yellow-400 text-black brutal-border hover:brutal-shadow-sm px-6 py-3 font-black uppercase tracking-widest active:translate-y-px transition-all shadow-[2px_2px_0_0_#000]"
+                                    >
+                                      10s Timer
+                                    </button>
+                                  )}
+                                </>
                               )}
                             </>
                           )}

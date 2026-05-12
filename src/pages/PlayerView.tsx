@@ -16,6 +16,8 @@ export default function PlayerView() {
   const [allProfiles, setAllProfiles] = useState<Record<string, any>>({});
   const [showProfileEditor, setShowProfileEditor] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
+  const [showingCorrectAnswer, setShowingCorrectAnswer] = useState(false);
+  const [lastAnswer, setLastAnswer] = useState<any>(null);
   const [buzzed, setBuzzed] = useState(false);
   const [answerContent, setAnswerContent] = useState("");
   const [riskBet, setRiskBet] = useState(0);
@@ -94,7 +96,76 @@ export default function PlayerView() {
     }
   };
 
+  const playDoublePointsSound = () => {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      
+      osc.type = "square";
+      osc.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+      osc.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.1); // E5
+      osc.frequency.setValueAtTime(783.99, audioCtx.currentTime + 0.2); // G5
+      osc.frequency.setValueAtTime(1046.50, audioCtx.currentTime + 0.3); // C6
+      
+      gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.6);
+      
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.6);
+    } catch (e) {}
+  };
+
   const prevScoreRef = useRef<number | null>(null);
+  const prevDoublePointsRef = useRef<boolean>(false);
+  const prevGameOverRef = useRef<boolean>(false);
+
+  const playVictorySound = () => {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+      osc.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.15); // E5
+      osc.frequency.setValueAtTime(783.99, audioCtx.currentTime + 0.3); // G5
+      osc.frequency.setValueAtTime(1046.50, audioCtx.currentTime + 0.45); // C6
+      
+      gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 1.5);
+      
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 1.5);
+    } catch(e) {}
+  };
+
+  useEffect(() => {
+    if (gameState?.doublePointsActive && !prevDoublePointsRef.current) {
+      playDoublePointsSound();
+    }
+    if (gameState !== null) {
+      prevDoublePointsRef.current = gameState.doublePointsActive;
+    }
+    
+    if (gameState?.isGameOver && !prevGameOverRef.current) {
+      // check if I am the winner
+      const sorted = Object.keys(gameState?.players || {}).map(pid => ({
+        id: pid,
+        score: gameState?.scoreboard?.[pid] || 0
+      })).sort((a,b) => b.score - a.score);
+      if (sorted.length > 0 && sorted[0].id === socket.id) {
+        playVictorySound();
+      }
+    }
+    if (gameState !== null) {
+      prevGameOverRef.current = gameState.isGameOver;
+    }
+  }, [gameState?.doublePointsActive, gameState?.isGameOver]);
 
   useEffect(() => {
     if (!gameState || !socket.id || !gameState.scoreboard) return;
@@ -203,7 +274,9 @@ export default function PlayerView() {
         boardPlayedValues: playedValues || {},
         boardCurrentTile: null,
         boardOpen: false,
-        boardRiskActive: false
+        boardRiskActive: false,
+        betsConfirmed: false,
+        riskBets: {}
       }));
     });
 
@@ -217,7 +290,9 @@ export default function PlayerView() {
         boardCurrentTile: [payload.category_index, payload.tile_index],
         boardRiskActive: payload.tile?.risk || false,
         questionMode: payload.tile?.mode || 'buzzer',
-        buzzLocked: false
+        buzzLocked: false,
+        betsConfirmed: false,
+        riskBets: {}
       }));
       setBuzzed(false);
       setAnswerContent("");
@@ -242,17 +317,30 @@ export default function PlayerView() {
             }
           }
         }
+        if (s.boardCurrentTile && s.board) {
+          const [cIdx, tIdx] = s.boardCurrentTile;
+          const tile = s.board.categories[cIdx]?.tiles[tIdx];
+          if (tile) {
+            setLastAnswer({
+              content: tile.mode === 'choice' && tile.correctIndex !== undefined ? 
+                `${["A", "B", "C", "D"][tile.correctIndex]}: ${tile.choices[tile.correctIndex]}` :
+                (tile.mode === 'guess' && tile.correctValue !== undefined ? tile.correctValue : (tile.answer?.content || "???")),
+              category: s.board.categories[cIdx].name
+            });
+          }
+        }
         return { 
           ...s, 
           boardRevealed: data.revealed, 
-          boardPlayedValues: data.playedValues || s.boardPlayedValues || {},
-          boardCurrentTile: null, 
-          boardOpen: false, 
-          boardRiskActive: false,
-          questionMode: null
+          boardPlayedValues: data.playedValues || s.boardPlayedValues || {}
         };
       });
-      setBuzzed(false);
+      setShowingCorrectAnswer(true);
+      setTimeout(() => {
+        setGameState(s => ({ ...s, boardCurrentTile: null, boardOpen: false }));
+        setShowingCorrectAnswer(false);
+        setBuzzed(false);
+      }, 5000);
     });
 
     socket.on("bets_confirmed", () => {
@@ -265,7 +353,11 @@ export default function PlayerView() {
     });
 
     socket.on("game_over", ({ leaderboard }) => {
-      setGameState(s => ({ ...s, showGameOver: true, gameOverLeaderboard: leaderboard }));
+      setGameState(s => ({ ...s, showGameOver: true, isGameOver: true, gameOverLeaderboard: leaderboard }));
+    });
+
+    socket.on("resume_game", () => {
+      setGameState(s => ({ ...s, showGameOver: false, isGameOver: false }));
     });
 
     socket.on("final_round_started", ({ finalists }) => {
@@ -359,6 +451,8 @@ export default function PlayerView() {
     if (buzzerSoundRef.current) {
       buzzerSoundRef.current.currentTime = 0;
       buzzerSoundRef.current.play().catch(() => {});
+    } else {
+      playTickSound();
     }
   };
 
@@ -372,6 +466,7 @@ export default function PlayerView() {
 
   
   const renderInputArea = () => {
+    if (showingCorrectAnswer) return null;
     if (gameState.boardCurrentTile && !gameState.boardOpen) {
       if (gameState.boardRiskActive && !gameState.betsConfirmed) {
         if (hasPlacedBet) {
@@ -451,13 +546,14 @@ export default function PlayerView() {
             <p className="text-sm font-black uppercase tracking-widest text-zinc-500 mb-2">Input Query Terminal</p>
             <input 
                type="text"
-               inputMode={gameState.questionMode === "guess" ? "numeric" : "text"}
-               pattern={gameState.questionMode === "guess" ? "[0-9]*" : undefined}
+               inputMode={gameState.questionMode === "guess" ? "decimal" : "text"}
+               pattern={gameState.questionMode === "guess" ? "[0-9.,\\-]*" : undefined}
                value={answerContent}
                onChange={e => {
                   let val = e.target.value;
                   if (gameState.questionMode === "guess") {
-                     val = val.replace(/[^0-9]/g, '');
+                     val = val.replace(/[^0-9.,\-]/g, '');
+                     val = val.replace(',', '.');
                   }
                   setAnswerContent(val);
                }}
@@ -507,6 +603,17 @@ export default function PlayerView() {
         );
     }
   };
+
+  const getOrdinal = (n: number) => {
+    const s = ["th", "st", "nd", "rd"];
+    const v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  };
+
+  const myBuzzRank = gameState?.buzzRecords?.findIndex((r: any) => r.pid === socket.id);
+  const buzzedPositionText = myBuzzRank !== undefined && myBuzzRank >= 0
+    ? `✓ INPUT REGISTERED (${getOrdinal(myBuzzRank + 1)})`
+    : `✓ INPUT REGISTERED`;
 
   return (
     <div className="min-h-screen bg-yellow-400 text-black p-6 font-sans flex flex-col selection:bg-white relative">
@@ -708,31 +815,81 @@ export default function PlayerView() {
                 <span className="relative z-10 text-6xl font-black italic tracking-tighter">{gameState.countdownSeconds}s</span>
               </div>
            )}
-           {gameState.showStandings && gameState.standingsLeaderboard && (
+           {gameState.showStandings && gameState.standingsLeaderboard && !gameState.isGameOver && (
              <div className="w-full max-w-2xl bg-blue-200 brutal-border brutal-shadow-sm p-6 mb-8 text-black">
                <h3 className="text-2xl font-black uppercase italic mb-4">Current Standings</h3>
                {gameState.standingsLeaderboard.map((entry: any, i: number) => (
-                 <div key={entry.player_id} className="flex justify-between font-bold text-xl">
-                   <span><span className={i === 0 ? "text-yellow-600" : i === 1 ? "text-zinc-500" : i === 2 ? "text-amber-700" : "text-black"}>{i+1}.</span> {entry.player_name}</span>
+                 <div key={entry.player_id} className="flex justify-between font-bold text-xl items-center mb-2 last:mb-0">
+                   <div className="flex items-center gap-4">
+                     <span className={i === 0 ? "text-yellow-600" : i === 1 ? "text-zinc-500" : i === 2 ? "text-amber-700" : "text-black"}>{i+1}.</span>
+                     {allProfiles[entry.player_name]?.avatar ? (
+                       <img src={allProfiles[entry.player_name].avatar} alt={entry.player_name} className="w-8 h-8 object-cover brutal-border bg-emerald-200" />
+                     ) : (
+                       <div className="w-8 h-8 brutal-border bg-zinc-200 flex items-center justify-center text-xs font-black uppercase">{entry.player_name[0] || '?'}</div>
+                     )}
+                     <span>{entry.player_name}</span>
+                   </div>
                    <span>{entry.score}</span>
                  </div>
                ))}
              </div>
            )}
-           {gameState.showGameOver && gameState.gameOverLeaderboard && (
-             <div className="w-full max-w-2xl bg-red-200 brutal-border brutal-shadow p-8 mb-8 text-black">
-               <h3 className="text-3xl font-black uppercase italic mb-4 text-red-600">Game Over</h3>
-               {gameState.gameOverLeaderboard.map((entry: any, i: number) => (
-                 <div key={entry.player_id} className="flex justify-between font-bold text-2xl">
-                   <span><span className={i === 0 ? "text-yellow-600" : i === 1 ? "text-zinc-500" : i === 2 ? "text-amber-700" : "text-black"}>{i+1}.</span> {entry.player_name}</span>
-                   <span>{entry.score}</span>
+           {gameState.isGameOver && (
+             <div className="w-full max-w-4xl bg-red-200 brutal-border brutal-shadow p-8 mb-8 text-black">
+               <h3 className="text-5xl font-black uppercase italic mb-8 text-red-600 text-center">Game Over</h3>
+               {Object.keys(gameState?.players || {}).map(pid => ({
+                  player_id: pid,
+                  player_name: gameState.players[pid].name,
+                  score: gameState.scoreboard[pid] || 0
+               })).sort((a,b) => b.score - a.score).map((entry: any, i: number) => (
+                 <div key={entry.player_id} className={`flex justify-between font-bold items-center mb-4 last:mb-0 ${i === 0 ? "text-4xl text-yellow-600 border-4 border-yellow-600 p-4 bg-yellow-100 italic" : "text-2xl"}`}>
+                   <div className="flex items-center gap-4">
+                     <span className={i === 0 ? "text-yellow-600" : i === 1 ? "text-zinc-500" : i === 2 ? "text-amber-700" : "text-black"}>{i+1}.</span>
+                     {allProfiles[entry.player_name]?.avatar ? (
+                       <img src={allProfiles[entry.player_name].avatar} alt={entry.player_name} className={`${i === 0 ? "w-16 h-16" : "w-10 h-10"} object-cover brutal-border bg-emerald-200`} />
+                     ) : (
+                       <div className={`${i === 0 ? "w-16 h-16" : "w-10 h-10"} brutal-border bg-zinc-200 flex items-center justify-center text-sm font-black uppercase text-black`}>{entry.player_name[0] || '?'}</div>
+                     )}
+                     <span className="text-black">{entry.player_name}</span>
+                   </div>
+                   <span className="text-black">{entry.score}</span>
                  </div>
                ))}
              </div>
            )}
-        {gameState.buzzLocked && <p className="bg-black text-yellow-400 brutal-border px-6 py-2 font-black uppercase tracking-widest mb-8 brutal-shadow-sm">🔒 SYSTEM LOCKED</p>}
-        {buzzed && <p className="bg-emerald-400 text-black brutal-border px-6 py-2 font-black uppercase tracking-widest mb-8 brutal-shadow-sm">✓ INPUT REGISTERED</p>}
+
+        {!gameState.isGameOver && (
+          <>
+        {gameState.buzzLocked && !showingCorrectAnswer && <p className="bg-black text-yellow-400 brutal-border px-6 py-2 font-black uppercase tracking-widest mb-8 brutal-shadow-sm">🔒 SYSTEM LOCKED</p>}
+        {buzzed && !showingCorrectAnswer && <p className="bg-emerald-400 text-black brutal-border px-6 py-2 font-black uppercase tracking-widest mb-8 brutal-shadow-sm">{buzzedPositionText}</p>}
         
+        {showingCorrectAnswer && gameState.boardCurrentTile && gameState.board && (
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="w-full max-w-2xl bg-emerald-400 brutal-border brutal-shadow p-8 mb-8 text-black text-center"
+          >
+            <h3 className="text-sm font-black uppercase tracking-widest mb-4 opacity-70">Correct Answer</h3>
+            {(() => {
+              const [cIdx, tIdx] = gameState.boardCurrentTile;
+              const tile = gameState.board.categories[cIdx]?.tiles[tIdx];
+              return (
+                <div className="flex flex-col items-center">
+                  <p className="text-4xl sm:text-6xl font-black uppercase italic tracking-tighter mb-4">
+                    {tile.mode === 'choice' && tile.correctIndex !== undefined ? 
+                      `${["A", "B", "C", "D"][tile.correctIndex]}: ${tile.choices[tile.correctIndex]}` :
+                      (tile.mode === 'guess' && tile.correctValue !== undefined ? tile.correctValue : (tile.answer?.content || "???"))
+                    }
+                  </p>
+                  {tile.answer?.src && (
+                    <img src={tile.answer.src} alt="Correct answer" className="max-h-48 brutal-border bg-white p-2 object-contain" />
+                  )}
+                </div>
+              );
+            })()}
+          </motion.div>
+        )}
+
         {gameState.finalRoundActive ? (
            <div className="w-full max-w-2xl bg-white brutal-border brutal-shadow p-8 mt-8 text-black text-left">
               <h2 className="text-3xl font-black uppercase italic tracking-tighter mb-4 text-purple-600">Final Round Active</h2>
@@ -769,7 +926,16 @@ export default function PlayerView() {
            </div>
         )}
         
+        {lastAnswer && !gameState.boardCurrentTile && !gameState.finalRoundActive && (
+          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-black text-white px-6 py-2 brutal-border brutal-shadow-sm flex items-center gap-3 z-40">
+             <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">Last Answer</span>
+             <span className="font-bold text-sm truncate max-w-[300px]">{lastAnswer.category}: {lastAnswer.content}</span>
+          </div>
+        )}
+
         {(!gameState.finalRoundActive || gameState.isFinalist) && renderInputArea()}
+          </>
+        )}
          </div>
       </div>
     </div>

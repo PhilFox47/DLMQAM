@@ -147,7 +147,9 @@ async function startServer() {
     boardCurrentTile: null as [number, number] | null,
     boardOpen: false,
     boardRiskActive: false,
+    betsConfirmed: false,
     riskBets: {} as Record<string, number>,
+    isGameOver: false,
     
     finalRoundActive: false,
     finalistIds: [] as string[],
@@ -410,10 +412,10 @@ async function startServer() {
             const pResponded = gameState.buzzRecords.some(r => r.pid === pid);
             if (winners.includes(pid)) {
                gameState.scoreboard[pid] += bet;
-               gameState.nameToScore[gameState.players[pid]?.name] += bet;
-            } else if (pResponded) {
+               if (gameState.players[pid]) gameState.nameToScore[gameState.players[pid].name] += bet;
+            } else if (pResponded && (tile.mode === "choice" || tile.mode === "guess")) {
                gameState.scoreboard[pid] -= bet;
-               gameState.nameToScore[gameState.players[pid]?.name] -= bet;
+               if (gameState.players[pid]) gameState.nameToScore[gameState.players[pid].name] -= bet;
             }
          });
       } else if (tile.mode === "choice") {
@@ -475,11 +477,12 @@ async function startServer() {
       const maxAllowed = Math.max(500, gameState.scoreboard[socket.id] || 0);
       if (bet > maxAllowed) bet = maxAllowed;
       gameState.riskBets[socket.id] = bet;
-      emitToHost("bet_update", { player_id: socket.id, bet });
+      io.emit("bet_update", { player_id: socket.id, bet });
     });
 
     socket.on("confirm_bets", () => {
       if (socket.id !== gameState.hostId) return;
+      gameState.betsConfirmed = true;
       io.emit("bets_confirmed");
     });
 
@@ -607,14 +610,19 @@ async function startServer() {
 
     socket.on("end_game", () => {
       if (socket.id !== gameState.hostId) return;
-      const leaderboard = Object.keys(gameState.players).map(pid => {
-         return {
-            player_id: pid,
-            player_name: gameState.players[pid].name,
-            score: gameState.scoreboard[pid] || 0
-         };
-      }).sort((a,b) => b.score - a.score);
-      io.emit("game_over", { leaderboard });
+      gameState.isGameOver = !gameState.isGameOver;
+      if (gameState.isGameOver) {
+        const leaderboard = Object.keys(gameState.players).map(pid => {
+           return {
+              player_id: pid,
+              player_name: gameState.players[pid].name,
+              score: gameState.scoreboard[pid] || 0
+           };
+        }).sort((a,b) => b.score - a.score);
+        io.emit("game_over", { leaderboard });
+      } else {
+        io.emit("resume_game");
+      }
     });
 
     socket.on("start_countdown", (data) => {
@@ -673,6 +681,7 @@ async function startServer() {
       gameState.questionMode = tile.mode || 'buzzer';
       gameState.boardOpen = false;
       gameState.boardRiskActive = !!tile.risk;
+      gameState.betsConfirmed = false;
       gameState.riskBets = {};
       gameState.buzzRecords = [];
       gameState.buzzLocked = false;
