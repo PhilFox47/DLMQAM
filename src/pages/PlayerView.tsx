@@ -426,6 +426,7 @@ export default function PlayerView() {
 
     socket.on("player_removed", ({ player_id, scoreboard }) => {
       setGameState(s => {
+         if (!s) return s;
          const newPlayers = { ...s.players };
          delete newPlayers[player_id];
          return { ...s, players: newPlayers, scoreboard };

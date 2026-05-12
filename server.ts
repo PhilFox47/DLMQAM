@@ -434,6 +434,16 @@ async function startServer() {
 
     socket.on("reset_scores", () => {
        if (socket.id !== gameState.hostId) return;
+       
+       // Clean up offline players automatically when points are reset
+       Object.keys(gameState.players).forEach(pid => {
+          if (gameState.players[pid].status === "offline") {
+             delete gameState.players[pid];
+             delete gameState.scoreboard[pid];
+             io.emit("player_removed", { player_id: pid, scoreboard: gameState.scoreboard });
+          }
+       });
+
        for (const pid of Object.keys(gameState.scoreboard)) {
           gameState.scoreboard[pid] = 0;
        }
