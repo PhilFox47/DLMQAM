@@ -43,7 +43,7 @@ export default function RoleSelection() {
         <Settings2 size={24} />
       </button>
 
-      <div className="w-full max-w-5xl bg-white brutal-border brutal-shadow flex flex-col md:flex-row overflow-hidden">
+      <div className="w-full max-w-5xl bg-white brutal-border brutal-shadow flex flex-col md:flex-row">
         
         {/* Left Side Branding */}
         <div className="w-full md:w-1/2 p-12 border-b-4 md:border-b-0 md:border-r-4 border-black flex flex-col justify-center bg-black text-white relative overflow-hidden">
@@ -119,7 +119,7 @@ export default function RoleSelection() {
                   />
                   
                   {isDropdownOpen && (
-                    <div className="absolute top-full left-0 right-0 max-h-48 overflow-y-auto bg-white brutal-border brutal-shadow z-50 mt-1">
+                    <div className="absolute top-full left-0 right-0 max-h-96 overflow-y-auto bg-white brutal-border brutal-shadow z-50 mt-1">
                       {filteredProfiles.map(p => (
                         <div 
                           key={p.name} 

@@ -463,10 +463,18 @@ async function startServer() {
     });
 
     socket.on("random_player", () => {
+      console.log("random_player called from", socket.id, "host is", gameState.hostId);
       if (socket.id !== gameState.hostId) return;
-      const activePids = Object.keys(gameState.players).filter(pid => gameState.players[pid].status !== "offline");
-      if (activePids.length === 0) return;
+      let activePids = Object.keys(gameState.players).filter(pid => gameState.players[pid].status !== "offline");
+      if (activePids.length === 0) {
+        console.log("No active players for random_player");
+        return;
+      }
+      if (activePids.length > 1 && gameState.boardSelector) {
+         activePids = activePids.filter(pid => pid !== gameState.boardSelector);
+      }
       const randomPid = activePids[Math.floor(Math.random() * activePids.length)];
+      console.log("random_player selected", randomPid);
       
       gameState.boardSelector = randomPid;
       io.emit("board_selector", { player_id: randomPid, player_name: gameState.players[randomPid].name });

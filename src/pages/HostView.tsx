@@ -403,6 +403,14 @@ export default function HostView() {
             >
               HISTORY
             </button>
+            <button 
+               onClick={() => {
+                 window.location.href = "/";
+               }}
+               className="col-span-2 flex items-center justify-center gap-1 py-2 text-xs bg-red-200 text-red-900 font-black uppercase tracking-widest brutal-border shadow-[2px_2px_0_0_#000] active:translate-y-px active:shadow-none hover:bg-red-300 transition-colors"
+            >
+              QUIT TO LOGIN
+            </button>
           </div>
           
           {gameState.board && gameState.board.finalRound && (

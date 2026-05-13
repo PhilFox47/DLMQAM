@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import clsx from "clsx";
 import { socket } from "../lib/socket";
 import JeopardyBoard from "./JeopardyBoard";
-import { Edit2, HelpCircle, X } from "lucide-react";
+import { Edit2, HelpCircle, X, LogOut } from "lucide-react";
 import ProfileEditor from "../components/ProfileEditor";
 
 export default function PlayerView() {
   const [params] = useSearchParams();
+  const navigate = useNavigate();
   const name = params.get("name") || "Player";
   const guest = params.get("guest") === "1";
 
@@ -1030,6 +1031,16 @@ export default function PlayerView() {
             <p className="text-5xl font-black tracking-tighter">{myScore}</p>
           </div>
         </div>
+        <button 
+          onClick={() => {
+            window.location.href = "/";
+          }}
+          className="bg-red-200 text-red-900 brutal-border brutal-shadow w-24 flex flex-col items-center justify-center gap-1 hover:bg-red-300 hover:-translate-y-1 transition-all group"
+          title="Return to Login"
+        >
+          <LogOut size={32} className="group-hover:scale-110 transition-transform" />
+          <span className="text-xs font-black uppercase tracking-widest">Quit</span>
+        </button>
         <button 
           onClick={() => setShowHelpModal(true)} 
           className="bg-blue-200 text-blue-900 brutal-border brutal-shadow w-24 flex flex-col items-center justify-center gap-1 hover:bg-blue-300 hover:-translate-y-1 transition-all group"
