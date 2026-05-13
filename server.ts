@@ -464,11 +464,12 @@ async function startServer() {
 
     socket.on("random_player", () => {
       if (socket.id !== gameState.hostId) return;
-      const pids = Object.keys(gameState.players);
-      if (pids.length === 0) return;
-      const randomPid = pids[Math.floor(Math.random() * pids.length)];
-      const p = gameState.players[randomPid];
-      if (p) emitToHost("random_player", { player_id: randomPid, player_name: p.name });
+      const activePids = Object.keys(gameState.players).filter(pid => gameState.players[pid].status !== "offline");
+      if (activePids.length === 0) return;
+      const randomPid = activePids[Math.floor(Math.random() * activePids.length)];
+      
+      gameState.boardSelector = randomPid;
+      io.emit("board_selector", { player_id: randomPid, player_name: gameState.players[randomPid].name });
     });
 
     socket.on("board_set_selector", (data) => {
@@ -806,6 +807,7 @@ async function startServer() {
     socket.on("start_countdown", (data) => {
       if (socket.id !== gameState.hostId) return;
       const seconds = data?.seconds || 10; // default 10
+      const lockOnEnd = seconds === 10;
       gameState.countdownActive = true;
       gameState.countdownSeconds = seconds;
       
@@ -822,10 +824,13 @@ async function startServer() {
             if (gameState.countdownInterval) clearInterval(gameState.countdownInterval);
             gameState.countdownInterval = null;
             gameState.countdownActive = false;
-            // Lock out players from buzzing / submitting
-            gameState.buzzLocked = true;
+            
+            if (lockOnEnd) {
+               // Lock out players from buzzing / submitting
+               gameState.buzzLocked = true;
+               io.emit("lock_status", { locked: true });
+            }
             io.emit("countdown_end");
-            io.emit("lock_status", { locked: true });
          }
       }, 1000);
     });

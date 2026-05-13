@@ -42,7 +42,10 @@ export default function JeopardyBoard({ gameState, isHost }: { gameState: any, i
              const tileBg = isHost ? (modeColorMap[tile.mode || "buzzer"] || "bg-yellow-400") : "bg-white";
 
              let bgClass = `${tileBg} text-black`;
-             if (isUsed) bgClass = "bg-zinc-200 opacity-50 cursor-not-allowed";
+             if (isUsed) {
+                 const usedColor = modeColorMap[tile.mode || "buzzer"] || "bg-yellow-400";
+                 bgClass = `${usedColor} opacity-40 saturate-50 cursor-not-allowed`;
+             }
              else if (isActive) bgClass = "bg-black text-white animate-pulse";
              else if (canClick) {
                  const hoverColorMap: Record<string, string> = {

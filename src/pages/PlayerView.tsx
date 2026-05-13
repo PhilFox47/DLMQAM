@@ -455,14 +455,15 @@ export default function PlayerView() {
               osc.connect(gain);
               gain.connect(ctx.destination);
               
-              osc.type = 'sawtooth';
-              osc.frequency.setValueAtTime(150, ctx.currentTime);
+              osc.type = 'sine';
+              osc.frequency.setValueAtTime(440, ctx.currentTime);
+              osc.frequency.exponentialRampToValueAtTime(300, ctx.currentTime + 0.5);
               
-              gain.gain.setValueAtTime(0.5, ctx.currentTime);
-              gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 1.0);
+              gain.gain.setValueAtTime(0.2, ctx.currentTime);
+              gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
               
               osc.start(ctx.currentTime);
-              osc.stop(ctx.currentTime + 1.0);
+              osc.stop(ctx.currentTime + 0.5);
            }
        } catch (e) { console.error("Audio error", e) }
     });
@@ -545,13 +546,14 @@ export default function PlayerView() {
                }
 
                let modStart = 0.6;
-               if (isDouble) {
+               if (tile.double) {
                   playTone(1200, 'sine', modStart, 0.3, 0.6);
                   playTone(1600, 'sine', modStart + 0.15, 0.5, 0.6);
                }
                if (isRisk) {
-                  playTone(150, 'sawtooth', modStart + (isDouble ? 0.3 : 0), 0.8, 0.5);
-                  playTone(155, 'sawtooth', modStart + (isDouble ? 0.3 : 0), 0.8, 0.5);
+                  playTone(400, 'square', modStart + (tile.double ? 0.3 : 0), 0.2, 0.2);
+                  playTone(600, 'square', modStart + 0.15 + (tile.double ? 0.3 : 0), 0.2, 0.2);
+                  playTone(800, 'square', modStart + 0.3 + (tile.double ? 0.3 : 0), 0.2, 0.4);
                }
             }
          } catch(e) {
