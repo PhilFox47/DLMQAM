@@ -528,6 +528,7 @@ async function startServer() {
          winners = gameState.buzzRecords.filter(r => String(r.answer).toUpperCase() === letter).map(r => r.pid);
       } else if (tile.mode === "guess" && typeof tile.correctValue === "number") {
          let minDiff = Infinity;
+         const EPSILON = 1e-9;
          const diffs = gameState.buzzRecords.map(r => {
             const val = parseFloat(r.answer);
             if (isNaN(val)) return { pid: r.pid, diff: Infinity };
@@ -535,7 +536,7 @@ async function startServer() {
          });
          diffs.forEach(d => { if (d.diff < minDiff) minDiff = d.diff; });
          if (minDiff < Infinity) {
-            winners = diffs.filter(d => d.diff === minDiff).map(d => d.pid);
+            winners = diffs.filter(d => Math.abs(d.diff - minDiff) < EPSILON).map(d => d.pid);
          }
       } else {
          winners = Array.from(gameState.questionPointReceivers);
@@ -913,7 +914,6 @@ async function startServer() {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: { port: PORT + 1 },
       },
       appType: "spa",
     });
