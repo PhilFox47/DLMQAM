@@ -789,8 +789,8 @@ export default function PlayerView() {
     
     switch (gameState.questionMode) {
       case "thisorthat": {
-        const catA = gameState.thisorthatCategoryA || currentTile?.categoryA || 'A';
-        const catB = gameState.thisorthatCategoryB || currentTile?.categoryB || 'B';
+        const catA = currentTile?.categoryA || gameState.thisorthatCategoryA || 'Category A';
+        const catB = currentTile?.categoryB || gameState.thisorthatCategoryB || 'Category B';
         const myAnswer = gameState.buzzRecords?.find((r: any) => r.pid === socket.id)?.answer;
         return (
           <div className="flex flex-col gap-8 w-full max-w-2xl mx-auto items-center mt-8">
