@@ -27,6 +27,18 @@ export default function PlayerView() {
   const [seasonData, setSeasonData] = useState<any>(null);
   const [gameRoles, setGameRoles] = useState<string[]>([]);
   const [teams, setTeams] = useState<Record<string, any>>({});
+  const [screwTokens, setScrewTokens] = useState(0);
+  const [showScrewPanel, setShowScrewPanel] = useState(false);
+  const [screwType, setScrewType] = useState<string | null>(null);
+  const [screwTarget, setScrewTarget] = useState<string>("");
+  const [screwInput, setScrewInput] = useState("");
+  const [screwTypes, setScrewTypes] = useState<any[]>([]);
+  const [screwNotification, setScrewNotification] = useState<string | null>(null);
+  const [isFlipped, setIsFlipped] = useState(false);
+  const [showEulaModal, setShowEulaModal] = useState(false);
+  const [eulaScrolled, setEulaScrolled] = useState(false);
+  const [eulaSourceName, setEulaSourceName] = useState("");
+  const [renames, setRenames] = useState<Record<string, string>>({});
 
   const buzzerSoundRef = useRef<HTMLAudioElement | null>(null);
 
@@ -211,6 +223,7 @@ export default function PlayerView() {
 
   useEffect(() => {
     fetchProfiles();
+    fetch("/api/screw-types").then(r => r.json()).then(data => setScrewTypes(data || [])).catch(() => {});
   }, []);
 
   const handleSaveProfile = (oldName: string, updatedProfile: any) => {
@@ -252,6 +265,12 @@ export default function PlayerView() {
         setRiskBet(state.riskBets[socket.id]);
       } else {
         setHasPlacedBet(false);
+      }
+      if (state.screwTokens && socket.id) {
+        setScrewTokens(state.screwTokens[socket.id] || 0);
+      }
+      if (state.renames) {
+        setRenames(state.renames);
       }
     });
 
@@ -332,16 +351,18 @@ export default function PlayerView() {
     });
 
     socket.on("board_show_question", (data) => {
-      setGameState(s => ({ 
-        ...s, 
-        boardOpen: true, 
-        questionMode: data.mode
+      setGameState(s => ({
+        ...s,
+        boardOpen: true,
+        questionMode: data.mode,
+        thisorthatCategoryA: data.categoryA,
+        thisorthatCategoryB: data.categoryB,
       }));
     });
 
     socket.on("board_answer", (data) => {
       setGameState(s => {
-        if (s.questionMode === "choice" || s.questionMode === "multiple_choice") {
+        if (s.questionMode === "choice" || s.questionMode === "multiple_choice" || s.questionMode === "thisorthat") {
           const myRecord = s.buzzRecords?.find((r: any) => r.pid === socket.id);
           if (myRecord) {
             if (!data.winners.includes(socket.id)) {
@@ -353,10 +374,13 @@ export default function PlayerView() {
           const [cIdx, tIdx] = s.boardCurrentTile;
           const tile = s.board.categories[cIdx]?.tiles[tIdx];
           if (tile) {
+            const correctLabel = tile.mode === 'thisorthat' && tile.correctCategory
+              ? `${tile.correctCategory === 'A' ? tile.categoryA : tile.categoryB} (${tile.correctCategory})`
+              : tile.mode === 'choice' && tile.correctIndex !== undefined
+                ? `${["A", "B", "C", "D"][tile.correctIndex]}: ${tile.choices[tile.correctIndex]}`
+                : (tile.mode === 'guess' && tile.correctValue !== undefined ? tile.correctValue : (tile.answer?.content || "???"));
             setLastAnswer({
-              content: tile.mode === 'choice' && tile.correctIndex !== undefined ? 
-                `${["A", "B", "C", "D"][tile.correctIndex]}: ${tile.choices[tile.correctIndex]}` :
-                (tile.mode === 'guess' && tile.correctValue !== undefined ? tile.correctValue : (tile.answer?.content || "???")),
+              content: correctLabel,
               category: s.board.categories[cIdx].name,
               winners: data.winners,
               buzzRecords: s.buzzRecords,
@@ -388,6 +412,7 @@ export default function PlayerView() {
       setGameState(s => ({ ...s, boardCurrentTile: null, boardOpen: false }));
       setShowingCorrectAnswer(false);
       setBuzzed(false);
+      setIsFlipped(false);
     });
 
     socket.on("bets_confirmed", () => {
@@ -414,6 +439,37 @@ export default function PlayerView() {
 
     socket.on("teams_update", ({ teamsMode: tm, teams: t }) => {
       setTeams(t);
+    });
+
+    socket.on("screw_applied", (data: any) => {
+      const typeLabels: Record<string, string> = { forced_buzz: 'Forced Buzz', eula_trap: 'EULA Trap', flip: 'Flip', rename: 'Rename' };
+      const label = typeLabels[data.type] || data.type;
+      const msg = data.targetName
+        ? `${data.sourceName} used ${label} on ${data.targetName}!`
+        : `${data.sourceName} used ${label}!`;
+      setScrewNotification(msg);
+      setTimeout(() => setScrewNotification(null), 4000);
+    });
+
+    socket.on("screw_effect", (data: any) => {
+      if (data.type === 'flip') {
+        setIsFlipped(true);
+        setScrewNotification(`${data.sourceName} flipped your screen!`);
+        setTimeout(() => setScrewNotification(null), 4000);
+      } else if (data.type === 'eula') {
+        setEulaSourceName(data.sourceName);
+        setEulaScrolled(false);
+        setShowEulaModal(true);
+      } else if (data.type === 'forced_buzz') {
+        setScrewNotification(`${data.sourceName} forced you to buzz!`);
+        setTimeout(() => setScrewNotification(null), 4000);
+        setBuzzed(true);
+      }
+    });
+
+    socket.on("screw_eula_required", () => {
+      setEulaScrolled(false);
+      setShowEulaModal(true);
     });
 
     socket.on("final_round_started", ({ finalists }) => {
@@ -732,6 +788,50 @@ export default function PlayerView() {
     };
     
     switch (gameState.questionMode) {
+      case "thisorthat": {
+        const catA = gameState.thisorthatCategoryA || currentTile?.categoryA || 'A';
+        const catB = gameState.thisorthatCategoryB || currentTile?.categoryB || 'B';
+        const myAnswer = gameState.buzzRecords?.find((r: any) => r.pid === socket.id)?.answer;
+        return (
+          <div className="flex flex-col gap-8 w-full max-w-2xl mx-auto items-center mt-8">
+            {currentTile && currentTile.question && gameState.boardOpen && (
+              <div className="bg-white brutal-border brutal-shadow text-black p-6 w-full text-center">
+                <p className="text-xl font-black uppercase italic">{currentTile.question?.content || "???"}</p>
+                {currentTile.question?.src && (
+                  <img src={currentTile.question.src} alt="Question graphic" className="mt-4 max-h-48 object-contain mx-auto" />
+                )}
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-6 w-full">
+              {(['A', 'B'] as const).map(cat => (
+                <button
+                  key={cat}
+                  disabled={!!myAnswer || gameState.buzzLocked}
+                  onClick={() => {
+                    if (!myAnswer && !gameState.buzzLocked) {
+                      socket.emit("thisorthat_answer", { category: cat });
+                      setBuzzed(true);
+                      setAnswerContent(cat);
+                    }
+                  }}
+                  className={clsx(
+                    "py-12 font-black text-3xl uppercase brutal-border brutal-shadow transition-all",
+                    myAnswer === cat ? (cat === 'A' ? 'bg-blue-500 text-white scale-105' : 'bg-red-500 text-white scale-105') :
+                    myAnswer ? 'bg-zinc-200 text-zinc-400 border-zinc-300' :
+                    cat === 'A' ? 'bg-blue-400 text-black hover:bg-blue-500 active:translate-y-2' : 'bg-red-400 text-black hover:bg-red-500 active:translate-y-2'
+                  )}
+                >
+                  {cat === 'A' ? catA : catB}
+                </button>
+              ))}
+            </div>
+            {myAnswer && (
+              <p className="font-black uppercase tracking-widest text-lg">✓ Answered: {myAnswer === 'A' ? catA : catB}</p>
+            )}
+            {renderCorrectAnswerDetails(currentTile)}
+          </div>
+        );
+      }
       case "choice":
         const letters = ["A", "B", "C", "D"];
         return (
@@ -847,8 +947,125 @@ export default function PlayerView() {
     ? `✓ INPUT REGISTERED (${getOrdinal(myBuzzRank + 1)})`
     : `✓ INPUT REGISTERED`;
 
+  const displayName = (pid: string, fallback: string) => renames[pid] || fallback;
+
+  const EULA_TEXT = `END USER LICENSE AGREEMENT — DLMQAM QUIZ PARTICIPATION AGREEMENT v42.0
+
+PLEASE READ THIS AGREEMENT CAREFULLY BEFORE ANSWERING ANY QUESTIONS. BY PRESSING A BUTTON OR HAVING AN OPINION, YOU AGREE TO ALL TERMS HEREIN, INCLUDING THE TERMS YOU HAVE NOT YET READ AND THOSE WRITTEN IN A FONT SIZE OF 0.
+
+1. GRANT OF LICENSE. You are hereby granted a limited, non-exclusive, non-transferable, revocable license to exist in the same room as the quiz board. This license may be revoked at any time for any reason, including but not limited to: winning too many points, having an unfair advantage due to general knowledge, or making the host feel bad.
+
+2. RESTRICTION ON FUN. You agree not to have an unreasonable amount of fun without first consulting the Fun Allowance Committee (FAC). The FAC shall meet quarterly, except in Q2, when it doesn't feel like it.
+
+3. INTELLECTUAL PROPERTY. Any and all answers you provide, thoughts you have, or guesses you make during the course of the quiz become the intellectual property of DLMQAM Corp GmbH Ltd. You retain no rights to your own cleverness.
+
+4. DATA COLLECTION. By participating, you consent to the collection of your biometric stress data, your opinions about whether "tomato" is a fruit or vegetable, and a detailed log of every time you sighed during gameplay.
+
+5. INDEMNIFICATION. You agree to indemnify, defend, and hold harmless the host, the quiz board, the Wi-Fi router, and any houseplants in the room from any and all claims arising from your participation, including claims relating to being screwed over by another player.
+
+6. DISCLAIMER OF WARRANTIES. THE QUIZ IS PROVIDED "AS IS." WE MAKE NO WARRANTIES THAT THE QUESTIONS ARE FAIR, THE ANSWERS ARE CORRECT, OR THAT THE EXPERIENCE WILL BE ENJOYABLE. IN FACT, WE ACTIVELY DISCLAIM THE WARRANTY OF ENJOYABILITY.
+
+7. LIMITATION OF LIABILITY. IN NO EVENT SHALL THE HOST BE LIABLE FOR DAMAGES EXCEEDING €0.00, WHICH IS ALSO THE AMOUNT OF MONEY YOU PAID TO PLAY.
+
+8. GOVERNING LAW. This agreement is governed by the laws of wherever you are sitting right now, or whichever jurisdiction has the most ridiculous contract enforcement provisions, whichever is more amusing.
+
+9. SEVERABILITY. If any portion of this agreement is found to be unenforceable, that portion shall be replaced with text that is equally unenforceable but slightly more confusing.
+
+10. ENTIRE AGREEMENT. This document, combined with your inexplicable decision to keep reading it, constitutes the entire agreement between the parties. You have been screwed. Have fun.
+
+By scrolling to the bottom of this document, you acknowledge that you have read, understood, and reluctantly accepted all of the above.`;
+
   return (
-    <div className="min-h-screen bg-yellow-400 text-black p-6 font-sans flex flex-col selection:bg-white relative">
+    <div className={clsx("min-h-screen bg-yellow-400 text-black p-6 font-sans flex flex-col selection:bg-white relative", isFlipped && "rotate-180")}>
+      {/* EULA Modal */}
+      {showEulaModal && (
+        <div className="fixed inset-0 z-[200] bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-white brutal-border brutal-shadow w-full max-w-lg p-6 flex flex-col max-h-[85vh]">
+            <h2 className="text-2xl font-black uppercase tracking-tighter mb-1">End User License Agreement</h2>
+            {eulaSourceName && <p className="text-sm font-bold text-red-600 mb-3">⚠️ {eulaSourceName} screwed you — accept to continue</p>}
+            <div
+              className="flex-1 overflow-y-auto text-xs font-mono text-zinc-700 leading-relaxed bg-zinc-50 brutal-border p-4 mb-4"
+              style={{ minHeight: 200 }}
+              onScroll={e => {
+                const el = e.currentTarget;
+                if (el.scrollHeight - el.scrollTop - el.clientHeight < 20) setEulaScrolled(true);
+              }}
+            >
+              {EULA_TEXT.split('\n').map((line, i) => <p key={i} className="mb-2">{line}</p>)}
+            </div>
+            <button
+              disabled={!eulaScrolled}
+              onClick={() => { socket.emit("eula_accepted"); setShowEulaModal(false); }}
+              className="w-full py-4 font-black uppercase tracking-widest text-lg brutal-border disabled:bg-zinc-200 disabled:text-zinc-400 bg-black text-white hover:bg-zinc-800 transition-colors"
+            >
+              {eulaScrolled ? "I ACCEPT (against my better judgement)" : "↓ Scroll to enable acceptance"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Screw notification */}
+      {screwNotification && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] bg-red-500 text-white brutal-border brutal-shadow px-6 py-3 font-black uppercase tracking-widest text-sm text-center max-w-sm">
+          🔩 {screwNotification}
+        </div>
+      )}
+
+      {/* Screw panel modal */}
+      {showScrewPanel && (
+        <div className="fixed inset-0 z-[150] bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-white brutal-border brutal-shadow w-full max-w-md p-6">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-black uppercase tracking-tighter">Use a Screw 🔩</h2>
+              <button onClick={() => { setShowScrewPanel(false); setScrewType(null); setScrewTarget(""); setScrewInput(""); }} className="font-black text-2xl hover:text-zinc-500">×</button>
+            </div>
+            <p className="text-sm font-bold text-zinc-500 mb-4">Tokens remaining: {screwTokens}</p>
+            <div className="space-y-3 mb-6">
+              {screwTypes.map((st: any) => (
+                <button key={st.id} onClick={() => setScrewType(st.id)}
+                  className={clsx("w-full text-left p-4 brutal-border transition-all", screwType === st.id ? "bg-black text-white" : "bg-white hover:bg-zinc-100")}>
+                  <div className="font-black uppercase">{st.label}</div>
+                  <div className="text-xs mt-1 opacity-70">{st.description}</div>
+                </button>
+              ))}
+            </div>
+            {screwType && screwTypes.find((s: any) => s.id === screwType)?.targetType === 'player' && (
+              <div className="mb-4">
+                <label className="block text-xs font-black uppercase tracking-widest text-zinc-500 mb-2">Target Player</label>
+                <select value={screwTarget} onChange={e => setScrewTarget(e.target.value)}
+                  className="w-full brutal-border bg-white text-black font-black p-4 focus:outline-none uppercase">
+                  <option value="">— Pick a player —</option>
+                  {Object.entries(gameState?.players || {}).filter(([pid]: [string, any]) => pid !== socket.id).map(([pid, p]: [string, any]) => (
+                    <option key={pid} value={pid}>{renames[pid] || p.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {screwType && screwTypes.find((s: any) => s.id === screwType)?.needsInput && (
+              <div className="mb-4">
+                <label className="block text-xs font-black uppercase tracking-widest text-zinc-500 mb-2">New Name (max 20 chars)</label>
+                <input type="text" maxLength={20} value={screwInput} onChange={e => setScrewInput(e.target.value)}
+                  className="w-full brutal-border bg-white text-black font-black text-xl p-4 focus:outline-none uppercase" placeholder="ENTER NAME" />
+              </div>
+            )}
+            <button
+              disabled={!screwType || (screwTypes.find((s: any) => s.id === screwType)?.targetType === 'player' && !screwTarget) || (screwTypes.find((s: any) => s.id === screwType)?.needsInput && !screwInput.trim())}
+              onClick={() => {
+                if (!screwType) return;
+                socket.emit("use_screw", { type: screwType, targetId: screwTarget || undefined, inputData: screwInput || undefined });
+                setShowScrewPanel(false);
+                setScrewType(null);
+                setScrewTarget("");
+                setScrewInput("");
+              }}
+              className="w-full py-4 font-black uppercase tracking-widest text-lg brutal-border disabled:bg-zinc-200 disabled:text-zinc-400 bg-red-500 text-white hover:bg-red-400 transition-colors"
+            >
+              DEPLOY SCREW
+            </button>
+          </div>
+        </div>
+      )}
+
       <AnimatePresence>
         {showQuestionIntro && gameState.boardCurrentTile && gameState.board?.categories?.[gameState.boardCurrentTile[0]] && (
           <motion.div
@@ -862,7 +1079,7 @@ export default function PlayerView() {
                  const category = gameState.board.categories[gameState.boardCurrentTile[0]];
                  const tile = category?.tiles?.[gameState.boardCurrentTile[1]];
                  const mode = tile?.mode || "buzzer";
-                 const colorMap: Record<string, string> = { choice: "bg-blue-400", guess: "bg-red-400", text: "bg-emerald-400", buzzer: "bg-yellow-400" };
+                 const colorMap: Record<string, string> = { choice: "bg-blue-400", guess: "bg-red-400", text: "bg-emerald-400", buzzer: "bg-yellow-400", thisorthat: "bg-purple-400" };
                  return colorMap[mode] || "bg-yellow-400";
               })()
             )}
@@ -892,12 +1109,13 @@ export default function PlayerView() {
                })()}
                {(() => {
                   const mode = gameState.board.categories[gameState.boardCurrentTile[0]].tiles[gameState.boardCurrentTile[1]].mode || "buzzer";
-                  const modeMap: Record<string, string> = { buzzer: "Buzzer Question", choice: "Multiple Choice", guess: "Closest Guess", text: "Text Input" };
+                  const modeMap: Record<string, string> = { buzzer: "Buzzer Question", choice: "Multiple Choice", guess: "Closest Guess", text: "Text Input", thisorthat: "This or That" };
                   const colorMap: Record<string, string> = {
                      choice: "bg-blue-400 text-black",
                      guess: "bg-red-400 text-black",
                      text: "bg-emerald-400 text-black",
-                     buzzer: "bg-yellow-400 text-black"
+                     buzzer: "bg-yellow-400 text-black",
+                     thisorthat: "bg-purple-400 text-black"
                   };
                   return (
                      <div className={`inline-block px-8 py-4 ${colorMap[mode] || colorMap.buzzer} text-3xl font-black uppercase tracking-widest brutal-border shadow-[6px_6px_0_0_#000]`}>
@@ -1063,8 +1281,18 @@ export default function PlayerView() {
           <LogOut size={32} className="group-hover:scale-110 transition-transform" />
           <span className="text-xs font-black uppercase tracking-widest">Quit</span>
         </button>
-        <button 
-          onClick={() => setShowHelpModal(true)} 
+        {screwTokens > 0 && (
+          <button
+            onClick={() => setShowScrewPanel(true)}
+            className="bg-red-400 text-black brutal-border brutal-shadow w-24 flex flex-col items-center justify-center gap-1 hover:bg-red-500 hover:-translate-y-1 transition-all group animate-bounce"
+            title="Use a Screw"
+          >
+            <span className="text-3xl">🔩</span>
+            <span className="text-xs font-black uppercase tracking-widest">×{screwTokens}</span>
+          </button>
+        )}
+        <button
+          onClick={() => setShowHelpModal(true)}
           className="bg-blue-200 text-blue-900 brutal-border brutal-shadow w-24 flex flex-col items-center justify-center gap-1 hover:bg-blue-300 hover:-translate-y-1 transition-all group"
           title="Tutorial & Help"
         >

@@ -29,6 +29,10 @@ export default function HostView() {
   const [showTeams, setShowTeams] = useState(false);
   const [seasonData, setSeasonData] = useState<any>(null);
   const [gameRoles, setGameRoles] = useState<Record<string, string[]>>({});
+  const [showScrews, setShowScrews] = useState(false);
+  const [screwNotification, setScrewNotification] = useState<string | null>(null);
+  const [screwTypes, setScrewTypes] = useState<any[]>([]);
+  const [renames, setRenames] = useState<Record<string, string>>({});
 
   const playBuzzSound = () => {
     try {
@@ -77,6 +81,7 @@ export default function HostView() {
 
   useEffect(() => {
     fetchProfiles();
+    fetch("/api/screw-types").then(r => r.json()).then(data => setScrewTypes(data || [])).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -85,6 +90,17 @@ export default function HostView() {
 
     socket.on("game_state", (state) => {
       setGameState(state);
+      if (state.renames) setRenames(state.renames);
+    });
+
+    socket.on("screw_applied", (data: any) => {
+      const typeLabels: Record<string, string> = { forced_buzz: 'Forced Buzz', eula_trap: 'EULA Trap', flip: 'Flip', rename: 'Rename' };
+      const label = typeLabels[data.type] || data.type;
+      const msg = data.targetName
+        ? `${data.sourceName} → ${label} → ${data.targetName}${data.data ? ` ("${data.data}")` : ''}`
+        : `${data.sourceName} deployed ${label}`;
+      setScrewNotification(msg);
+      setTimeout(() => setScrewNotification(null), 5000);
     });
 
     socket.on("registered", (data) => {
@@ -422,6 +438,15 @@ export default function HostView() {
               TEAMS {teamsMode && "✓"}
             </button>
             <button
+              onClick={() => setShowScrews(!showScrews)}
+              className={clsx(
+                "flex items-center justify-center gap-1 py-2 text-xs font-black uppercase tracking-widest brutal-border shadow-[2px_2px_0_0_#000] active:translate-y-px active:shadow-none transition-colors",
+                showScrews ? "bg-red-400 text-black hover:bg-red-300" : "bg-zinc-600 text-white hover:bg-zinc-500"
+              )}
+            >
+              🔩 SCREWS
+            </button>
+            <button
                onClick={() => { socket.emit("end_game") }}
                className={clsx(
                  "flex items-center justify-center gap-1 py-2 text-xs font-black uppercase tracking-widest brutal-border shadow-[2px_2px_0_0_#000] active:translate-y-px active:shadow-none hover:opacity-90 transition-colors",
@@ -523,6 +548,45 @@ export default function HostView() {
                     </div>
                   ))}
                 </>
+              )}
+            </div>
+          )}
+
+          {showScrews && (
+            <div className="p-4 bg-zinc-800 border-t-4 border-red-400">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-black text-red-400 uppercase tracking-widest">🔩 Screw Assignments</span>
+              </div>
+              {screwNotification && (
+                <div className="mb-3 bg-red-900 text-red-200 text-xs font-bold p-2 border border-red-400">
+                  {screwNotification}
+                </div>
+              )}
+              <p className="text-[10px] text-zinc-400 font-bold mb-3">Click + to give a player a screw token. They can use it any time during the game.</p>
+              {Object.values(gameState.players || {}).map((p: any) => {
+                const tokenCount = gameState.screwTokens?.[p.id] || 0;
+                return (
+                  <div key={p.id} className="flex items-center justify-between mb-2 text-xs">
+                    <span className="text-white font-bold truncate max-w-[120px]">{renames[p.id] || p.name}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-zinc-400 font-black">{tokenCount > 0 ? `🔩×${tokenCount}` : '—'}</span>
+                      <button
+                        onClick={() => socket.emit("assign_screw", { player_id: p.id })}
+                        className="text-[10px] bg-red-500 text-white px-2 py-1 font-black hover:bg-red-400 brutal-border"
+                      >+ Screw</button>
+                    </div>
+                  </div>
+                );
+              })}
+              {Object.keys(gameState.activeScrews || {}).length > 0 && (
+                <div className="mt-3 pt-3 border-t border-zinc-600">
+                  <p className="text-[10px] text-zinc-400 font-black uppercase mb-2">Pending Screws</p>
+                  {(gameState.activeScrews || []).map((s: any, i: number) => (
+                    <div key={i} className="text-[10px] text-orange-300 font-bold mb-1">
+                      {screwTypes.find(t => t.id === s.type)?.label || s.type} → {s.targetId ? (renames[s.targetId] || gameState.players[s.targetId]?.name || s.targetId) : 'all'}
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           )}

@@ -142,7 +142,7 @@ export default function BoardEditor() {
                     >
                       <span className="text-4xl font-black italic tracking-tighter">{tile.value}</span>
                       <div className="flex flex-col items-center mt-2 gap-1">
-                        {tile.mode && <span className={clsx("px-1.5 py-0.5 border-2 border-black text-[10px] font-black uppercase leading-none", tile.mode === 'choice' ? "bg-blue-400 text-black" : tile.mode === 'guess' ? "bg-red-400 text-black" : tile.mode === 'text' ? "bg-emerald-400 text-black" : "bg-yellow-400 text-black")}>{tile.mode}</span>}
+                        {tile.mode && <span className={clsx("px-1.5 py-0.5 border-2 border-black text-[10px] font-black uppercase leading-none", tile.mode === 'choice' ? "bg-blue-400 text-black" : tile.mode === 'guess' ? "bg-red-400 text-black" : tile.mode === 'text' ? "bg-emerald-400 text-black" : tile.mode === 'thisorthat' ? "bg-purple-400 text-black" : "bg-yellow-400 text-black")}>{tile.mode === 'thisorthat' ? 'T/T' : tile.mode}</span>}
                         <div className="flex gap-1">
                            {tile.double && <span className="px-1.5 py-0.5 bg-yellow-400 text-black border-2 border-black text-[10px] font-black uppercase leading-none">2X</span>}
                            {tile.risk && <span className="px-1.5 py-0.5 bg-red-500 text-white border-2 border-black text-[10px] font-black uppercase leading-none">RISK</span>}
@@ -178,12 +178,12 @@ export default function BoardEditor() {
                 <div>
                   <label className="block text-sm font-black uppercase tracking-widest text-zinc-500 mb-3 border-b-4 border-black pb-2">Interaction Mode</label>
                   <div className="flex flex-wrap gap-4">
-                    {['buzzer', 'guess', 'choice', 'text'].map(m => (
-                      <button 
-                        key={m} 
+                    {['buzzer', 'guess', 'choice', 'text', 'thisorthat'].map(m => (
+                      <button
+                        key={m}
                         onClick={() => setEditingTile({...editingTile, mode: m})}
                         className={clsx("flex-1 py-4 font-black uppercase tracking-widest brutal-border hover:shadow-[4px_4px_0_0_#000] transition-all", editingTile.mode === m ? "bg-black text-white" : "bg-white text-black hover:bg-zinc-100")}
-                      >{m}</button>
+                      >{m === 'thisorthat' ? 'This or That' : m}</button>
                     ))}
                   </div>
                 </div>
@@ -243,6 +243,32 @@ export default function BoardEditor() {
                       className="w-full bg-white brutal-border text-black font-black text-2xl p-4 focus:outline-none focus:bg-yellow-50 text-center" 
                       placeholder="0000" 
                     />
+                  </div>
+                )}
+
+                {editingTile.mode === 'thisorthat' && (
+                  <div>
+                    <label className="block text-sm font-black uppercase tracking-widest text-zinc-500 mb-3 border-b-4 border-black pb-2">This or That Categories</label>
+                    <p className="text-sm text-zinc-500 font-bold mb-4">The question prompt above is the item players must classify. Set the two categories and which one is correct.</p>
+                    <div className="grid grid-cols-2 gap-4 mb-4">
+                      <div>
+                        <label className="block text-xs font-black uppercase tracking-widest text-zinc-500 mb-2">Category A Label</label>
+                        <input type="text" value={editingTile.categoryA || ''} onChange={e => setEditingTile({...editingTile, categoryA: e.target.value})} className="w-full bg-white brutal-border text-black font-black text-lg uppercase p-4 focus:outline-none focus:bg-blue-50" placeholder="e.g. FRUITS" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-black uppercase tracking-widest text-zinc-500 mb-2">Category B Label</label>
+                        <input type="text" value={editingTile.categoryB || ''} onChange={e => setEditingTile({...editingTile, categoryB: e.target.value})} className="w-full bg-white brutal-border text-black font-black text-lg uppercase p-4 focus:outline-none focus:bg-red-50" placeholder="e.g. VEGETABLES" />
+                      </div>
+                    </div>
+                    <label className="block text-xs font-black uppercase tracking-widest text-zinc-500 mb-2">Correct Category</label>
+                    <div className="flex gap-4">
+                      {(['A', 'B'] as const).map(cat => (
+                        <button key={cat} onClick={() => setEditingTile({...editingTile, correctCategory: cat})}
+                          className={clsx("flex-1 py-4 font-black text-2xl uppercase brutal-border transition-all", editingTile.correctCategory === cat ? (cat === 'A' ? 'bg-blue-500 text-white' : 'bg-red-500 text-white') : 'bg-white text-black hover:bg-zinc-100')}>
+                          {cat === 'A' ? (editingTile.categoryA || 'Category A') : (editingTile.categoryB || 'Category B')}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
 

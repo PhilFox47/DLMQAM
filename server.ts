@@ -37,6 +37,13 @@ async function ensureDataFiles() {
   }
 }
 
+const SCREW_TYPES = [
+  { id: 'forced_buzz', label: 'Forced Buzz', description: 'Target is automatically buzzed in for the next question', targetType: 'player', needsInput: false },
+  { id: 'eula_trap', label: 'EULA Trap', description: 'All other players must accept a lengthy EULA before answering', targetType: 'all', needsInput: false },
+  { id: 'flip', label: 'Flip', description: "Target's screen flips upside down for the next question", targetType: 'player', needsInput: false },
+  { id: 'rename', label: 'Rename', description: "Change target's displayed name for the rest of the game (stats unaffected)", targetType: 'player', needsInput: true },
+] as const;
+
 function getCurrentSeason() {
   const now = new Date();
   const year = now.getFullYear();
@@ -67,7 +74,7 @@ async function startServer() {
     nameToScore: {} as Record<string, number>,
     scoreboard: {} as Record<string, number>,
     doublePointsActive: false,
-    questionMode: null as 'buzzer' | 'guess' | 'choice' | 'text' | null,
+    questionMode: null as 'buzzer' | 'guess' | 'choice' | 'text' | 'thisorthat' | null,
     buzzLocked: false,
     buzzRecords: [] as Array<{ pid: string, time: number, answer?: any, bet?: number }>,
     correctAnswer: null as any,
@@ -110,6 +117,10 @@ async function startServer() {
     playerGameStats: {} as Record<string, { firstBuzzCount: number, riskBetsWon: number, totalRiskWagered: number }>,
     teamsMode: false as boolean,
     teams: {} as Record<string, { id: string, name: string, color: string, playerIds: string[] }>,
+    screwTokens: {} as Record<string, number>,
+    activeScrews: [] as Array<{ type: string, sourceId: string, targetId?: string, data?: any }>,
+    renames: {} as Record<string, string>,
+    pendingEulaPlayers: [] as string[],
   };
 
   async function loadScores() {
@@ -302,9 +313,13 @@ async function startServer() {
     }
   });
 
+  app.get("/api/screw-types", (_req, res) => {
+    res.json(SCREW_TYPES);
+  });
+
   // Strips non-serializable fields (Set → Array, drops Timeout) before sending over the wire
   function serializeGameState() {
-    const { countdownInterval, questionPointReceivers, ...rest } = gameState;
+    const { countdownInterval, questionPointReceivers, pendingEulaPlayers, ...rest } = gameState;
     return { ...rest, questionPointReceivers: Array.from(questionPointReceivers) };
   }
 
@@ -418,6 +433,10 @@ async function startServer() {
       if (gameState.buzzLocked || !gameState.questionMode) return;
       if (gameState.buzzRecords.some(r => r.pid === socket.id)) return;
       if (gameState.finalRoundActive && !gameState.finalistIds.includes(socket.id)) return;
+      if (gameState.pendingEulaPlayers.includes(socket.id)) {
+        socket.emit("screw_eula_required");
+        return;
+      }
 
       const adjustedTime = Date.now() - p.pingMs;
       gameState.buzzRecords.push({ pid: socket.id, time: adjustedTime, answer: data.answer });
@@ -502,6 +521,10 @@ async function startServer() {
        saveScores();
        gameState.scoreHistory = [];
        gameState.playerGameStats = {};
+       gameState.screwTokens = {};
+       gameState.activeScrews = [];
+       gameState.renames = {};
+       gameState.pendingEulaPlayers = [];
        io.emit("scoreboard", { scoreboard: gameState.scoreboard });
     });
 
@@ -560,6 +583,30 @@ async function startServer() {
       gameState.boardOpen = true;
       const [cIdx, tIdx] = gameState.boardCurrentTile;
       const tile = gameState.board.categories[cIdx].tiles[tIdx];
+
+      // Apply forced_buzz screws: auto-insert target into buzzRecords
+      const forcedBuzzScrews = gameState.activeScrews.filter(s => s.type === 'forced_buzz');
+      forcedBuzzScrews.forEach(screw => {
+        if (screw.targetId && gameState.players[screw.targetId]) {
+          if (!gameState.buzzRecords.some(r => r.pid === screw.targetId)) {
+            gameState.buzzRecords.push({ pid: screw.targetId, time: Date.now(), answer: undefined });
+            io.to(screw.targetId).emit("screw_effect", { type: 'forced_buzz', sourceId: screw.sourceId, sourceName: gameState.players[screw.sourceId]?.name || '?' });
+          }
+        }
+      });
+      gameState.activeScrews = gameState.activeScrews.filter(s => s.type !== 'forced_buzz');
+      if (forcedBuzzScrews.length > 0) io.emit("buzz_update", { records: gameState.buzzRecords });
+
+      // Apply eula_trap screws: require all other players to accept EULA before buzzing
+      const eulaTrap = gameState.activeScrews.find(s => s.type === 'eula_trap');
+      if (eulaTrap) {
+        gameState.pendingEulaPlayers = Object.keys(gameState.players).filter(pid => pid !== eulaTrap.sourceId);
+        gameState.activeScrews = gameState.activeScrews.filter(s => s.type !== 'eula_trap');
+        gameState.pendingEulaPlayers.forEach(pid => {
+          io.to(pid).emit("screw_effect", { type: 'eula', sourceId: eulaTrap.sourceId, sourceName: gameState.players[eulaTrap.sourceId]?.name || '?' });
+        });
+      }
+
       io.emit("board_show_question", {
         category_index: cIdx,
         tile_index: tIdx,
@@ -567,7 +614,9 @@ async function startServer() {
         mode: tile.mode || "buzzer",
         choices: tile.choices,
         correct_index: tile.correctIndex,
-        correct_value: tile.correctValue
+        correct_value: tile.correctValue,
+        categoryA: tile.categoryA,
+        categoryB: tile.categoryB,
       });
     });
 
@@ -590,7 +639,9 @@ async function startServer() {
       gameState.boardPlayedValues[key] = displayPts;
       
       let winners: string[] = [];
-      if (tile.mode === "choice" && typeof tile.correctIndex === "number") {
+      if (tile.mode === "thisorthat" && tile.correctCategory) {
+         winners = gameState.buzzRecords.filter(r => r.answer === tile.correctCategory).map(r => r.pid);
+      } else if (tile.mode === "choice" && typeof tile.correctIndex === "number") {
          const letter = ["A", "B", "C", "D"][tile.correctIndex];
          winners = gameState.buzzRecords.filter(r => String(r.answer).toUpperCase() === letter).map(r => r.pid);
       } else if (tile.mode === "guess" && typeof tile.correctValue === "number") {
@@ -621,7 +672,7 @@ async function startServer() {
                if (gameState.players[pid]) gameState.nameToScore[gameState.players[pid].name] -= bet;
             }
          });
-      } else if (tile.mode === "choice") {
+      } else if (tile.mode === "choice" || tile.mode === "thisorthat") {
          const basePoints = tile.value || 0;
          const pts = basePoints * (gameState.doublePointsActive ? 2 : 1) * (tile.double ? 2 : 1);
          gameState.buzzRecords.forEach(r => {
@@ -697,7 +748,8 @@ async function startServer() {
       gameState.questionMode = null;
       gameState.answersRevealed = false;
       gameState.questionPointReceivers.clear();
-      
+      gameState.pendingEulaPlayers = [];
+
       io.emit("board_close_question");
     });
 
@@ -715,6 +767,63 @@ async function startServer() {
       if (socket.id !== gameState.hostId) return;
       gameState.betsConfirmed = true;
       io.emit("bets_confirmed");
+    });
+
+    socket.on("thisorthat_answer", (data: { category: 'A' | 'B' }) => {
+      const p = gameState.players[socket.id];
+      if (!p || gameState.questionMode !== 'thisorthat') return;
+      if (gameState.buzzRecords.some(r => r.pid === socket.id)) return;
+      if (gameState.pendingEulaPlayers.includes(socket.id)) {
+        socket.emit("screw_eula_required");
+        return;
+      }
+      const adjustedTime = Date.now() - p.pingMs;
+      gameState.buzzRecords.push({ pid: socket.id, time: adjustedTime, answer: data.category });
+      io.emit("buzz_update", { records: gameState.buzzRecords });
+    });
+
+    socket.on("eula_accepted", () => {
+      gameState.pendingEulaPlayers = gameState.pendingEulaPlayers.filter(pid => pid !== socket.id);
+    });
+
+    socket.on("assign_screw", (data: { player_id: string }) => {
+      if (socket.id !== gameState.hostId) return;
+      if (!gameState.players[data.player_id]) return;
+      gameState.screwTokens[data.player_id] = (gameState.screwTokens[data.player_id] || 0) + 1;
+      io.emit("game_state", serializeGameState());
+    });
+
+    socket.on("use_screw", (data: { type: string, targetId?: string, inputData?: string }) => {
+      const { type, targetId, inputData } = data;
+      if (!gameState.screwTokens[socket.id] || gameState.screwTokens[socket.id] <= 0) return;
+      const screwDef = SCREW_TYPES.find(s => s.id === type);
+      if (!screwDef) return;
+      if (screwDef.targetType === 'player' && (!targetId || !gameState.players[targetId])) return;
+
+      gameState.screwTokens[socket.id]--;
+
+      const sourceName = gameState.players[socket.id]?.name || '?';
+
+      if (type === 'forced_buzz') {
+        gameState.activeScrews.push({ type: 'forced_buzz', sourceId: socket.id, targetId });
+        io.emit("screw_applied", { type, sourceId: socket.id, sourceName, targetId, targetName: gameState.players[targetId!]?.name });
+      } else if (type === 'eula_trap') {
+        gameState.activeScrews.push({ type: 'eula_trap', sourceId: socket.id });
+        io.emit("screw_applied", { type, sourceId: socket.id, sourceName });
+      } else if (type === 'flip') {
+        gameState.activeScrews.push({ type: 'flip', sourceId: socket.id, targetId });
+        io.to(targetId!).emit("screw_effect", { type: 'flip', sourceId: socket.id, sourceName });
+        io.emit("screw_applied", { type, sourceId: socket.id, sourceName, targetId, targetName: gameState.players[targetId!]?.name });
+      } else if (type === 'rename') {
+        const newName = (inputData || '').trim().slice(0, 20);
+        if (!newName || !targetId) return;
+        gameState.renames[targetId] = newName;
+        io.emit("screw_applied", { type, sourceId: socket.id, sourceName, targetId, targetName: gameState.players[targetId]?.name, data: newName });
+        io.emit("game_state", serializeGameState());
+        return;
+      }
+
+      io.emit("game_state", serializeGameState());
     });
 
     socket.on("start_final_round", () => {
