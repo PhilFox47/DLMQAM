@@ -186,7 +186,7 @@ async function startServer() {
 
       let targetName = new_name && new_name !== name ? new_name : name;
       
-      const profile = profiles[name] || { stats: { total_points: 0, games_played: 0 }, achievements: {} };
+      const profile = profiles[name] || { stats: { total_points: 0, games_played: 0, wins: 0 }, achievements: {} };
       if (avatar !== undefined) profile.avatar = avatar;
       if (buzzer !== undefined) profile.buzzer = buzzer;
       if (color !== undefined) profile.color = color;
@@ -209,13 +209,14 @@ async function startServer() {
            pids.forEach(pid => {
               gameState.players[pid].name = targetName;
            });
-           io.emit("game_state", gameState);
+           io.emit("game_state", serializeGameState());
         }
       } else {
         profiles[targetName] = profile;
       }
 
       await fs.writeFile(profilesPath, JSON.stringify(profiles, null, 2));
+      io.emit("profiles_updated", Object.entries(profiles).map(([n, p]) => ({ name: n, ...(p as any) })));
       res.json({ status: "ok", profile: { name: targetName, ...profile } });
     } catch (e) {
       res.status(500).json({ error: "Failed to update profile" });
@@ -260,6 +261,12 @@ async function startServer() {
     res.json(gameState.board || {});
   });
 
+  // Strips non-serializable fields (Set → Array, drops Timeout) before sending over the wire
+  function serializeGameState() {
+    const { countdownInterval, questionPointReceivers, ...rest } = gameState;
+    return { ...rest, questionPointReceivers: Array.from(questionPointReceivers) };
+  }
+
   function emitToHost(event: string, payload: any) {
     if (gameState.hostId) io.to(gameState.hostId).emit(event, payload);
   }
@@ -276,7 +283,7 @@ async function startServer() {
         gameState.hostId = socket.id;
         
         socket.emit("registered", { role: "host", id: socket.id, name: name || "Host" });
-        socket.emit("game_state", gameState);
+        socket.emit("game_state", serializeGameState());
       } else if (role === "player" && name) {
         // Find existing player with the same name
         const existingPid = Object.keys(gameState.players).find(pid => gameState.players[pid].name === name);
@@ -333,13 +340,13 @@ async function startServer() {
         let profile = profiles[name];
 
         if (!profile) {
-           profile = { stats: { total_points: 0, games_played: 0 }, achievements: {} };
+           profile = { stats: { total_points: 0, games_played: 0, wins: 0 }, achievements: {} };
            profiles[name] = profile;
            await fs.writeFile(path.join(DATA_DIR, "profiles.json"), JSON.stringify(profiles, null, 2));
         }
 
         socket.emit("registered", { role: "player", id: socket.id, name, guest: !!guest, profile });
-        socket.emit("game_state", gameState);
+        socket.emit("game_state", serializeGameState());
 
         io.emit("player_joined", { player: gameState.players[socket.id], profile, scoreboard: gameState.scoreboard });
       }
@@ -382,7 +389,7 @@ async function startServer() {
     socket.on("score", (data) => {
       if (socket.id !== gameState.hostId) return; // Host only
       const { player_id, points } = data;
-      if (!gameState.scoreboard[player_id]) gameState.scoreboard[player_id] = 0;
+      if (gameState.scoreboard[player_id] === undefined) gameState.scoreboard[player_id] = 0;
       gameState.scoreboard[player_id] += points;
       
       const p = gameState.players[player_id];
@@ -737,7 +744,7 @@ async function startServer() {
     socket.on("double_points", () => {
        if (socket.id !== gameState.hostId) return;
        gameState.doublePointsActive = !gameState.doublePointsActive;
-       io.emit("game_state", gameState);
+       io.emit("game_state", serializeGameState());
     });
 
     socket.on("show_standings", () => {
@@ -861,7 +868,7 @@ async function startServer() {
       const isSelector = socket.id === gameState.boardSelector;
       
       if (!isHost && !isSelector) return;
-      
+      if (!gameState.board) return;
       if (gameState.boardCurrentTile) return;
       
       gameState.questionPointReceivers.clear();
