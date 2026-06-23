@@ -76,6 +76,19 @@ export default function ProfilesManagement({ onClose }: { onClose?: () => void }
                   <span className="text-xs font-black uppercase tracking-widest text-zinc-500">Wins</span>
                   <span className="text-xl font-black text-yellow-600">{p.stats?.wins || 0}</span>
                 </div>
+                {p.achievements && (Object.keys(p.achievements).length > 0) && (
+                  <div className="flex flex-wrap gap-1 pt-2 border-t-2 border-zinc-200 mt-2">
+                    {p.achievements.miro_bane > 0 && (
+                      <span className="text-lg" title={`Miro Bane ×${p.achievements.miro_bane}`}>🏆</span>
+                    )}
+                    {p.achievements.champion && <span className="text-lg" title="Champion">👑</span>}
+                    {p.achievements.veteran_50 && <span className="text-lg" title="Legend (50+ games)">🎖️</span>}
+                    {!p.achievements.veteran_50 && p.achievements.veteran_25 && <span className="text-lg" title="Veteran (25+ games)">🎖️</span>}
+                    {!p.achievements.veteran_25 && p.achievements.veteran_10 && <span className="text-lg" title="Regular (10+ games)">🎖️</span>}
+                    {p.achievements.speed_demon_unlocked && <span className="text-lg" title="Speed Demon">⚡</span>}
+                    {p.achievements.risk_master_unlocked && <span className="text-lg" title="Risk Master">🎲</span>}
+                  </div>
+                )}
               </div>
             </div>
           ))}

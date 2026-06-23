@@ -24,6 +24,9 @@ export default function PlayerView() {
   const [answerContent, setAnswerContent] = useState("");
   const [riskBet, setRiskBet] = useState(0);
   const [hasPlacedBet, setHasPlacedBet] = useState(false);
+  const [seasonData, setSeasonData] = useState<any>(null);
+  const [gameRoles, setGameRoles] = useState<string[]>([]);
+  const [teams, setTeams] = useState<Record<string, any>>({});
 
   const buzzerSoundRef = useRef<HTMLAudioElement | null>(null);
 
@@ -396,12 +399,21 @@ export default function PlayerView() {
       setTimeout(() => setGameState(s => ({ ...s, showStandings: false })), 5000);
     });
 
-    socket.on("game_over", ({ leaderboard }) => {
+    socket.on("game_over", ({ leaderboard, season, gameRoles: roles }) => {
       setGameState(s => ({ ...s, showGameOver: true, isGameOver: true, gameOverLeaderboard: leaderboard }));
+      if (season) setSeasonData(season);
+      if (roles && socket.id) {
+        const myName = params.get("name") || "";
+        setGameRoles(roles[myName] || []);
+      }
     });
 
     socket.on("resume_game", () => {
       setGameState(s => ({ ...s, showGameOver: false, isGameOver: false }));
+    });
+
+    socket.on("teams_update", ({ teamsMode: tm, teams: t }) => {
+      setTeams(t);
     });
 
     socket.on("final_round_started", ({ finalists }) => {
@@ -1024,7 +1036,17 @@ export default function PlayerView() {
                 <Edit2 size={24}/>
               </div>
             </div>
-            <h2 className="text-3xl font-black uppercase italic tracking-tighter">{myProfile?.name || name}</h2>
+            <div>
+              <h2 className="text-3xl font-black uppercase italic tracking-tighter">{myProfile?.name || name}</h2>
+              {(() => {
+                const myTeam = Object.values(teams).find((t: any) => t.playerIds.includes(socket.id)) as any;
+                return myTeam ? (
+                  <div className="mt-1">
+                    <span className="text-xs font-black uppercase tracking-widest px-3 py-1 bg-yellow-400 brutal-border">{myTeam.name}</span>
+                  </div>
+                ) : null;
+              })()}
+            </div>
           </div>
           <div className="text-right">
             <p className="text-zinc-500 text-xs font-black uppercase tracking-widest mb-1">POINTS</p>
@@ -1113,6 +1135,39 @@ export default function PlayerView() {
                    <span className="text-black">{entry.score}</span>
                  </div>
                ))}
+               {gameRoles.length > 0 && (
+                 <div className="mt-4 pt-4 border-t-4 border-black">
+                   <h3 className="text-xs font-black uppercase tracking-widest mb-2">Your Game Awards</h3>
+                   <div className="flex flex-wrap gap-2">
+                     {gameRoles.map(r => (
+                       <span key={r} className={`text-sm font-black uppercase px-3 py-1 brutal-border ${
+                         r === 'mvp' ? 'bg-yellow-400 text-black' :
+                         r === 'speed_demon' ? 'bg-blue-400 text-white' :
+                         r === 'risk_master' ? 'bg-red-500 text-white' : 'bg-zinc-300 text-black'
+                       }`}>
+                         {r === 'mvp' ? '👑 MVP' : r === 'speed_demon' ? '⚡ Speed Demon' : r === 'risk_master' ? '🎲 Risk Master' : r}
+                       </span>
+                     ))}
+                   </div>
+                 </div>
+               )}
+               {seasonData && seasonData.leaderboard && seasonData.leaderboard.length > 0 && (
+                 <div className="mt-4 pt-4 border-t-4 border-black">
+                   <h3 className="text-xs font-black uppercase tracking-widest mb-3">Season {seasonData.label} Standings</h3>
+                   {seasonData.leaderboard.slice(0, 5).map((entry: any, i: number) => (
+                     <div key={entry.name} className="flex justify-between font-bold items-center mb-2">
+                       <div className="flex items-center gap-2">
+                         <span className={i === 0 ? "text-yellow-600 font-black" : ""}>{i+1}.</span>
+                         <span className={`truncate max-w-[120px] ${entry.name === name ? 'text-yellow-600 font-black' : ''}`}>{entry.name}</span>
+                       </div>
+                       <div className="text-right text-sm">
+                         <span className="font-black">{entry.points}</span>
+                         <span className="text-zinc-600 ml-1">({entry.games}G)</span>
+                       </div>
+                     </div>
+                   ))}
+                 </div>
+               )}
              </div>
            )}
 

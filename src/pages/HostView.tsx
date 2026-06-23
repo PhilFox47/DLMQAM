@@ -22,6 +22,13 @@ export default function HostView() {
   const [lastAnswer, setLastAnswer] = useState<any>(null);
   const [allProfiles, setAllProfiles] = useState<Record<string, any>>({});
   const [editingScoreId, setEditingScoreId] = useState<string | null>(null);
+  const [lastUndo, setLastUndo] = useState<{ player_name: string, points: number } | null>(null);
+  const [teams, setTeams] = useState<Record<string, any>>({});
+  const [teamsMode, setTeamsMode] = useState(false);
+  const [newTeamName, setNewTeamName] = useState("");
+  const [showTeams, setShowTeams] = useState(false);
+  const [seasonData, setSeasonData] = useState<any>(null);
+  const [gameRoles, setGameRoles] = useState<Record<string, string[]>>({});
 
   const playBuzzSound = () => {
     try {
@@ -189,8 +196,19 @@ export default function HostView() {
       setTimeout(() => setGameState(s => ({ ...s, showStandings: false })), 5000);
     });
 
-    socket.on("game_over", ({ leaderboard }) => {
+    socket.on("undo_applied", ({ player_name, points }) => {
+      setLastUndo({ player_name, points });
+      setTimeout(() => setLastUndo(null), 3000);
+    });
+    socket.on("teams_update", ({ teamsMode: tm, teams: t }) => {
+      setTeamsMode(tm);
+      setTeams(t);
+    });
+
+    socket.on("game_over", ({ leaderboard, season, gameRoles: roles }) => {
       setGameState(s => ({ ...s, showGameOver: true, isGameOver: true, gameOverLeaderboard: leaderboard }));
+      if (season) setSeasonData(season);
+      if (roles) setGameRoles(roles || {});
     });
 
     socket.on("resume_game", () => {
@@ -376,19 +394,34 @@ export default function HostView() {
             >
               RANDOM
             </button>
-            <button 
+            <button
+              onClick={() => socket.emit("undo_score")}
+              className="flex items-center justify-center gap-1 py-2 text-xs bg-orange-300 text-black font-black uppercase tracking-widest brutal-border shadow-[2px_2px_0_0_#000] active:translate-y-px active:shadow-none hover:bg-orange-200 transition-colors"
+            >
+              ↩ UNDO
+            </button>
+            <button
                onClick={() => { socket.emit("show_standings") }}
                className="flex items-center justify-center gap-1 py-2 text-xs bg-blue-400 text-black font-black uppercase tracking-widest brutal-border shadow-[2px_2px_0_0_#000] active:translate-y-px active:shadow-none hover:bg-blue-300 transition-colors"
             >
               STANDINGS
             </button>
-            <button 
+            <button
                onClick={() => { setShowProfiles(true) }}
                className="flex items-center justify-center gap-1 py-2 text-xs bg-purple-400 text-black font-black uppercase tracking-widest brutal-border shadow-[2px_2px_0_0_#000] active:translate-y-px active:shadow-none hover:bg-purple-300 transition-colors"
             >
               PROFILES
             </button>
-            <button 
+            <button
+              onClick={() => setShowTeams(!showTeams)}
+              className={clsx(
+                "flex items-center justify-center gap-1 py-2 text-xs font-black uppercase tracking-widest brutal-border shadow-[2px_2px_0_0_#000] active:translate-y-px active:shadow-none transition-colors",
+                teamsMode ? "bg-emerald-400 text-black hover:bg-emerald-300" : "bg-zinc-600 text-white hover:bg-zinc-500"
+              )}
+            >
+              TEAMS {teamsMode && "✓"}
+            </button>
+            <button
                onClick={() => { socket.emit("end_game") }}
                className={clsx(
                  "flex items-center justify-center gap-1 py-2 text-xs font-black uppercase tracking-widest brutal-border shadow-[2px_2px_0_0_#000] active:translate-y-px active:shadow-none hover:opacity-90 transition-colors",
@@ -413,9 +446,15 @@ export default function HostView() {
             </button>
           </div>
           
+          {lastUndo && (
+            <div className="text-xs font-bold text-orange-300 text-center mt-2">
+              ↩ Undid {lastUndo.points > 0 ? '+' : ''}{lastUndo.points} for {lastUndo.player_name}
+            </div>
+          )}
+
           {gameState.board && gameState.board.finalRound && (
              <div className="mb-4">
-               <button 
+               <button
                   onClick={() => socket.emit("start_final_round")}
                   className="w-full flex items-center justify-center gap-1 py-2 text-xs bg-black text-white font-black uppercase tracking-widest brutal-border shadow-[2px_2px_0_0_#eab308] active:translate-y-px active:shadow-none hover:bg-zinc-800 transition-colors"
                >
@@ -423,7 +462,71 @@ export default function HostView() {
                </button>
              </div>
           )}
-          
+
+          {showTeams && (
+            <div className="mb-4 p-3 bg-zinc-800 border-2 border-zinc-600">
+              <div className="flex justify-between items-center mb-3">
+                <span className="text-xs font-black uppercase tracking-widest text-zinc-400">Team Mode</span>
+                <button
+                  onClick={() => socket.emit("toggle_teams_mode")}
+                  className={clsx("text-xs px-2 py-1 font-black uppercase brutal-border", teamsMode ? "bg-emerald-400 text-black" : "bg-zinc-600 text-white")}
+                >
+                  {teamsMode ? "ON" : "OFF"}
+                </button>
+              </div>
+              {teamsMode && (
+                <>
+                  <div className="flex gap-2 mb-3">
+                    <input
+                      value={newTeamName}
+                      onChange={e => setNewTeamName(e.target.value)}
+                      placeholder="Team name..."
+                      className="flex-1 text-xs bg-zinc-700 text-white px-2 py-1 border border-zinc-500 font-bold"
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && newTeamName.trim()) {
+                          socket.emit("create_team", { name: newTeamName.trim(), color: '#facc15' });
+                          setNewTeamName("");
+                        }
+                      }}
+                    />
+                    <button
+                      onClick={() => { if (newTeamName.trim()) { socket.emit("create_team", { name: newTeamName.trim(), color: '#facc15' }); setNewTeamName(""); } }}
+                      className="text-xs bg-yellow-400 text-black px-2 py-1 font-black brutal-border hover:bg-yellow-300"
+                    >+ Add</button>
+                  </div>
+                  {Object.values(teams).map((team: any) => (
+                    <div key={team.id} className="mb-2 p-2 bg-zinc-700 border border-zinc-500">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-xs font-black text-white uppercase">{team.name}</span>
+                        <button onClick={() => socket.emit("delete_team", { team_id: team.id })} className="text-[10px] bg-red-500 text-white px-1 font-black brutal-border hover:bg-red-600">✕</button>
+                      </div>
+                      <select
+                        className="w-full text-xs bg-zinc-600 text-white border border-zinc-400 px-1 py-1"
+                        defaultValue=""
+                        onChange={e => { if (e.target.value) socket.emit("assign_player_team", { player_id: e.target.value, team_id: team.id }); e.target.value = ""; }}
+                      >
+                        <option value="">+ Add player...</option>
+                        {Object.values(gameState.players).filter((p: any) => !Object.values(teams).some((t: any) => t.playerIds.includes(p.id))).map((p: any) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                      {team.playerIds.map((pid: string) => {
+                        const p = gameState.players[pid];
+                        if (!p) return null;
+                        return (
+                          <div key={pid} className="flex justify-between items-center mt-1 text-[10px] text-zinc-300 font-bold">
+                            <span>{p.name}</span>
+                            <button onClick={() => socket.emit("assign_player_team", { player_id: pid, team_id: null })} className="text-red-400 hover:text-red-300">✕</button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          )}
+
           <h3 className="text-xs uppercase font-black text-zinc-400 tracking-widest mb-1">Connected Nodes</h3>
         </div>
         <div className="flex-1 overflow-y-auto px-4 py-4 bg-zinc-50 space-y-3">
@@ -467,6 +570,42 @@ export default function HostView() {
                    <span>{entry.score}</span>
                  </div>
                ))}
+               {gameRoles && Object.keys(gameRoles).length > 0 && (
+                 <div className="mt-3 pt-3 border-t-2 border-red-300">
+                   <h4 className="text-xs font-black uppercase tracking-widest text-red-700 mb-2">Game Awards</h4>
+                   {Object.entries(gameRoles).map(([name, roles]) => (
+                     <div key={name} className="flex flex-wrap gap-1 mb-1 items-center">
+                       <span className="text-xs font-bold text-red-900 min-w-[60px]">{name}:</span>
+                       {(roles as string[]).map(r => (
+                         <span key={r} className={`text-[10px] font-black uppercase px-1.5 py-0.5 brutal-border ${
+                           r === 'mvp' ? 'bg-yellow-400 text-black' :
+                           r === 'speed_demon' ? 'bg-blue-400 text-white' :
+                           r === 'risk_master' ? 'bg-red-500 text-white' : 'bg-zinc-300 text-black'
+                         }`}>
+                           {r === 'mvp' ? '👑 MVP' : r === 'speed_demon' ? '⚡ Speed Demon' : r === 'risk_master' ? '🎲 Risk Master' : r}
+                         </span>
+                       ))}
+                     </div>
+                   ))}
+                 </div>
+               )}
+               {seasonData && seasonData.leaderboard && seasonData.leaderboard.length > 0 && (
+                 <div className="mt-3 pt-3 border-t-2 border-red-300">
+                   <h4 className="text-xs font-black uppercase tracking-widest text-red-700 mb-2">Season {seasonData.label} Standings</h4>
+                   {seasonData.leaderboard.slice(0, 5).map((entry: any, i: number) => (
+                     <div key={entry.name} className="flex justify-between text-xs font-bold items-center mb-1">
+                       <div className="flex items-center gap-1">
+                         <span className={i === 0 ? "text-yellow-600" : "text-red-800"}>{i+1}.</span>
+                         <span className="truncate max-w-[80px]">{entry.name}</span>
+                       </div>
+                       <div className="text-right">
+                         <span className="font-black">{entry.points}</span>
+                         <span className="text-red-600 ml-1">({entry.games}G {entry.wins}W)</span>
+                       </div>
+                     </div>
+                   ))}
+                 </div>
+               )}
              </div>
            )}
            {Object.values(gameState.players).sort((a: any, b: any) => (gameState.scoreboard[b.id] || 0) - (gameState.scoreboard[a.id] || 0)).map((p: any) => (
@@ -480,6 +619,10 @@ export default function HostView() {
                    )}
                    <div className={clsx("w-3 h-3 brutal-border shrink-0", p.status === "online" ? "bg-emerald-400" : "bg-red-500")}></div>
                    <span className="font-black text-sm uppercase tracking-tighter truncate max-w-[90px]" title={p.name}>{p.name}</span>
+                   {teamsMode && (() => {
+                     const team = Object.values(teams).find((t: any) => t.playerIds.includes(p.id)) as any;
+                     return team ? <span className="text-[9px] font-black uppercase px-1 bg-yellow-400 border border-black">{team.name}</span> : null;
+                   })()}
                  </div>
                  <div className="flex items-center gap-2">
                    <button 

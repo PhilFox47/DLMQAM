@@ -96,6 +96,54 @@ export default function ProfileEditor({ profile, onClose, onSave, isHost = false
               </div>
             </div>
           )}
+          {profile.achievements && Object.keys(profile.achievements).length > 0 && (
+            <div className="pt-4 border-t-4 border-black mt-4">
+              <h3 className="font-black uppercase tracking-widest text-sm text-zinc-500 mb-3">Achievements</h3>
+              <div className="flex flex-wrap gap-2">
+                {profile.achievements.miro_bane > 0 && (
+                  <div className="bg-red-100 brutal-border px-2 py-1 text-center" title={`Beaten Miro/Punisher ${profile.achievements.miro_bane} time(s)`}>
+                    <div className="text-lg">🏆</div>
+                    <div className="text-[9px] font-black uppercase tracking-widest">Miro Bane</div>
+                    <div className="text-xs font-black text-red-600">×{profile.achievements.miro_bane}</div>
+                  </div>
+                )}
+                {profile.achievements.champion && (
+                  <div className="bg-yellow-100 brutal-border px-2 py-1 text-center" title="Won at least one game">
+                    <div className="text-lg">👑</div>
+                    <div className="text-[9px] font-black uppercase tracking-widest">Champion</div>
+                  </div>
+                )}
+                {profile.achievements.veteran_50 ? (
+                  <div className="bg-purple-100 brutal-border px-2 py-1 text-center" title="Played 50+ games">
+                    <div className="text-lg">🎖️</div>
+                    <div className="text-[9px] font-black uppercase tracking-widest">Legend</div>
+                  </div>
+                ) : profile.achievements.veteran_25 ? (
+                  <div className="bg-blue-100 brutal-border px-2 py-1 text-center" title="Played 25+ games">
+                    <div className="text-lg">🎖️</div>
+                    <div className="text-[9px] font-black uppercase tracking-widest">Veteran</div>
+                  </div>
+                ) : profile.achievements.veteran_10 && (
+                  <div className="bg-zinc-100 brutal-border px-2 py-1 text-center" title="Played 10+ games">
+                    <div className="text-lg">🎖️</div>
+                    <div className="text-[9px] font-black uppercase tracking-widest">Regular</div>
+                  </div>
+                )}
+                {profile.achievements.speed_demon_unlocked && (
+                  <div className="bg-blue-100 brutal-border px-2 py-1 text-center" title="Won Speed Demon role">
+                    <div className="text-lg">⚡</div>
+                    <div className="text-[9px] font-black uppercase tracking-widest">Speed Demon</div>
+                  </div>
+                )}
+                {profile.achievements.risk_master_unlocked && (
+                  <div className="bg-red-100 brutal-border px-2 py-1 text-center" title="Won Risk Master role">
+                    <div className="text-lg">🎲</div>
+                    <div className="text-[9px] font-black uppercase tracking-widest">Risk Master</div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
           {profile.stats && profile.history && profile.history.length > 0 && (
             <div className="pt-4 border-t-4 border-black mt-4 max-h-48 overflow-y-auto">
                <h3 className="font-black uppercase tracking-widest text-sm text-zinc-500 mb-2">Game History</h3>
@@ -122,6 +170,19 @@ export default function ProfileEditor({ profile, onClose, onSave, isHost = false
                              {game.categories?.join(", ") || "No categories"}
                            </span>
                            <span className="font-black">{game.score} PTS</span>
+                           {game.roles && game.roles.length > 0 && (
+                             <div className="flex gap-1 mt-1 flex-wrap">
+                               {game.roles.map((r: string) => (
+                                 <span key={r} className={`text-[8px] font-black uppercase px-1 py-0.5 ${
+                                   r === 'mvp' ? 'bg-yellow-300 text-black' :
+                                   r === 'speed_demon' ? 'bg-blue-300 text-black' :
+                                   r === 'risk_master' ? 'bg-red-400 text-white' : 'bg-zinc-300 text-black'
+                                 }`}>
+                                   {r === 'mvp' ? '👑' : r === 'speed_demon' ? '⚡' : r === 'risk_master' ? '🎲' : ''}  {r.replace('_', ' ')}
+                                 </span>
+                               ))}
+                             </div>
+                           )}
                          </div>
                        </button>
 

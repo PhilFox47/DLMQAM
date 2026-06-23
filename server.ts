@@ -37,6 +37,20 @@ async function ensureDataFiles() {
   }
 }
 
+function getCurrentSeason() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const quarter = Math.floor(now.getMonth() / 3) + 1;
+  const startMonth = (quarter - 1) * 3;
+  const endMonth = quarter * 3;
+  return {
+    id: `${year}-Q${quarter}`,
+    label: `Q${quarter} ${year}`,
+    start: new Date(year, startMonth, 1).toISOString(),
+    end: new Date(year, endMonth, 0, 23, 59, 59, 999).toISOString(),
+  };
+}
+
 async function startServer() {
   await ensureDataFiles();
   const app = express();
@@ -92,6 +106,10 @@ async function startServer() {
     countdownActive: false,
     countdownSeconds: 0,
     countdownInterval: null as NodeJS.Timeout | null,
+    scoreHistory: [] as Array<{ player_id: string, points: number, player_name: string }>,
+    playerGameStats: {} as Record<string, { firstBuzzCount: number, riskBetsWon: number, totalRiskWagered: number }>,
+    teamsMode: false as boolean,
+    teams: {} as Record<string, { id: string, name: string, color: string, playerIds: string[] }>,
   };
 
   async function loadScores() {
@@ -261,6 +279,29 @@ async function startServer() {
     res.json(gameState.board || {});
   });
 
+  app.get("/api/season", async (req, res) => {
+    try {
+      const season = getCurrentSeason();
+      const gamesData = await fs.readFile(path.join(DATA_DIR, "games.json"), "utf8");
+      const games = JSON.parse(gamesData);
+      const seasonGames = games.filter((g: any) => g.date >= season.start && g.date <= season.end);
+      const totals: Record<string, { name: string, points: number, games: number, wins: number }> = {};
+      seasonGames.forEach((game: any) => {
+        game.leaderboard.forEach(({ player_name, score }: any, idx: number) => {
+          if (!totals[player_name]) totals[player_name] = { name: player_name, points: 0, games: 0, wins: 0 };
+          totals[player_name].points += score;
+          totals[player_name].games++;
+          if (idx === 0) totals[player_name].wins++;
+        });
+      });
+      const leaderboard = Object.values(totals).filter(p => p.games > 0).sort((a, b) => b.points - a.points);
+      res.json({ season, leaderboard, totalGames: seasonGames.length });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Failed to load season data" });
+    }
+  });
+
   // Strips non-serializable fields (Set → Array, drops Timeout) before sending over the wire
   function serializeGameState() {
     const { countdownInterval, questionPointReceivers, ...rest } = gameState;
@@ -391,7 +432,8 @@ async function startServer() {
       const { player_id, points } = data;
       if (gameState.scoreboard[player_id] === undefined) gameState.scoreboard[player_id] = 0;
       gameState.scoreboard[player_id] += points;
-      
+      gameState.scoreHistory.push({ player_id, points, player_name: gameState.players[player_id]?.name || '' });
+
       const p = gameState.players[player_id];
       if (p) {
         gameState.nameToScore[p.name] = gameState.scoreboard[player_id];
@@ -458,7 +500,25 @@ async function startServer() {
           gameState.nameToScore[name] = 0;
        }
        saveScores();
+       gameState.scoreHistory = [];
+       gameState.playerGameStats = {};
        io.emit("scoreboard", { scoreboard: gameState.scoreboard });
+    });
+
+    socket.on("undo_score", () => {
+      if (socket.id !== gameState.hostId) return;
+      const last = gameState.scoreHistory.pop();
+      if (!last) return;
+      if (gameState.scoreboard[last.player_id] !== undefined) {
+        gameState.scoreboard[last.player_id] -= last.points;
+      }
+      const p = gameState.players[last.player_id];
+      if (p) {
+        gameState.nameToScore[p.name] = gameState.scoreboard[last.player_id];
+        saveScores();
+      }
+      io.emit("scoreboard", { scoreboard: gameState.scoreboard });
+      emitToHost("undo_applied", { player_id: last.player_id, player_name: last.player_name, points: last.points });
     });
 
     socket.on("remove_player", (data) => {
@@ -603,6 +663,26 @@ async function startServer() {
       }
 
       saveScores();
+
+      // Track per-game stats for roles
+      if (gameState.questionMode === 'buzzer' || gameState.questionMode === 'text') {
+        if (gameState.buzzRecords.length > 0) {
+          const firstPid = gameState.buzzRecords[0].pid;
+          if (!gameState.playerGameStats[firstPid]) gameState.playerGameStats[firstPid] = { firstBuzzCount: 0, riskBetsWon: 0, totalRiskWagered: 0 };
+          gameState.playerGameStats[firstPid].firstBuzzCount++;
+        }
+      }
+      if (gameState.boardRiskActive) {
+        winners.forEach(pid => {
+          if (!gameState.playerGameStats[pid]) gameState.playerGameStats[pid] = { firstBuzzCount: 0, riskBetsWon: 0, totalRiskWagered: 0 };
+          gameState.playerGameStats[pid].riskBetsWon++;
+        });
+        Object.entries(gameState.riskBets).forEach(([pid, bet]: [string, number]) => {
+          if (!gameState.playerGameStats[pid]) gameState.playerGameStats[pid] = { firstBuzzCount: 0, riskBetsWon: 0, totalRiskWagered: 0 };
+          gameState.playerGameStats[pid].totalRiskWagered += bet || 0;
+        });
+      }
+
       io.emit("scoreboard", { scoreboard: gameState.scoreboard });
 
       gameState.answersRevealed = true;
@@ -747,6 +827,37 @@ async function startServer() {
        io.emit("game_state", serializeGameState());
     });
 
+    socket.on("toggle_teams_mode", () => {
+      if (socket.id !== gameState.hostId) return;
+      gameState.teamsMode = !gameState.teamsMode;
+      if (!gameState.teamsMode) gameState.teams = {};
+      io.emit("teams_update", { teamsMode: gameState.teamsMode, teams: gameState.teams });
+    });
+
+    socket.on("create_team", (data: any) => {
+      if (socket.id !== gameState.hostId) return;
+      const id = Math.random().toString(36).substr(2, 8);
+      gameState.teams[id] = { id, name: data.name || "New Team", color: data.color || '#facc15', playerIds: [] };
+      io.emit("teams_update", { teamsMode: gameState.teamsMode, teams: gameState.teams });
+    });
+
+    socket.on("delete_team", (data: any) => {
+      if (socket.id !== gameState.hostId) return;
+      delete gameState.teams[data.team_id];
+      io.emit("teams_update", { teamsMode: gameState.teamsMode, teams: gameState.teams });
+    });
+
+    socket.on("assign_player_team", (data: any) => {
+      if (socket.id !== gameState.hostId) return;
+      Object.values(gameState.teams).forEach((t: any) => {
+        t.playerIds = t.playerIds.filter((id: string) => id !== data.player_id);
+      });
+      if (data.team_id && gameState.teams[data.team_id]) {
+        gameState.teams[data.team_id].playerIds.push(data.player_id);
+      }
+      io.emit("teams_update", { teamsMode: gameState.teamsMode, teams: gameState.teams });
+    });
+
     socket.on("show_standings", () => {
       if (socket.id !== gameState.hostId) return;
       const leaderboard = Object.keys(gameState.players).map(pid => {
@@ -770,15 +881,55 @@ async function startServer() {
               score: gameState.scoreboard[pid] || 0
            };
         }).sort((a,b) => b.score - a.score);
-        io.emit("game_over", { leaderboard });
-
         try {
           const profilesData = await fs.readFile(path.join(DATA_DIR, "profiles.json"), "utf8");
           const profiles = JSON.parse(profilesData);
           const date = new Date().toISOString();
           const categories = gameState.board?.categories?.map((c: any) => c.name) || [];
           const gameId = date + "-" + Math.random().toString(36).substr(2, 9);
-          
+
+          // Compute per-game roles
+          const gameRoles: Record<string, string[]> = {};
+          const addRole = (name: string, role: string) => {
+            if (!gameRoles[name]) gameRoles[name] = [];
+            gameRoles[name].push(role);
+          };
+
+          // MVP: highest score
+          if (leaderboard.length > 0) addRole(leaderboard[0].player_name, 'mvp');
+
+          // Speed Demon: most first-buzzes this game
+          let maxFirstBuzzes = 1;
+          let speedDemonPid: string | null = null;
+          Object.entries(gameState.playerGameStats).forEach(([pid, stats]) => {
+            if (stats.firstBuzzCount > maxFirstBuzzes) {
+              maxFirstBuzzes = stats.firstBuzzCount;
+              speedDemonPid = pid;
+            }
+          });
+          if (speedDemonPid) {
+            const sdName = gameState.players[speedDemonPid]?.name;
+            if (sdName) addRole(sdName, 'speed_demon');
+          }
+
+          // Risk Master: most risk bets won
+          let maxRiskWins = 0;
+          let riskMasterPid: string | null = null;
+          Object.entries(gameState.playerGameStats).forEach(([pid, stats]) => {
+            if (stats.riskBetsWon > maxRiskWins) {
+              maxRiskWins = stats.riskBetsWon;
+              riskMasterPid = pid;
+            }
+          });
+          if (riskMasterPid && maxRiskWins >= 1) {
+            const rmName = gameState.players[riskMasterPid]?.name;
+            if (rmName) addRole(rmName, 'risk_master');
+          }
+
+          // Check if Miro/Punisher played
+          const MIRO_NAMES = ['miro', 'punisher'];
+          const miroIdx = leaderboard.findIndex(e => MIRO_NAMES.includes(e.player_name.toLowerCase()));
+
           leaderboard.forEach(({ player_name, score }, index) => {
             if (profiles[player_name]) {
               const profile = profiles[player_name];
@@ -789,28 +940,63 @@ async function startServer() {
                 score,
                 position: index + 1,
                 numPlayers: leaderboard.length,
-                categories
+                categories,
+                roles: gameRoles[player_name] || []
               });
 
-              if (!profile.stats) profile.stats = { total_points: 0, games_played: 0 };
+              if (!profile.stats) profile.stats = { total_points: 0, games_played: 0, wins: 0 };
               profile.stats.total_points += score;
               profile.stats.games_played += 1;
-              if (index === 0) {
-                 profile.stats.wins = (profile.stats.wins || 0) + 1;
+              if (index === 0) profile.stats.wins = (profile.stats.wins || 0) + 1;
+
+              if (!profile.achievements) profile.achievements = {};
+
+              // Miro Bane: beat Miro/Punisher
+              if (miroIdx > 0 && index < miroIdx) {
+                profile.achievements.miro_bane = (profile.achievements.miro_bane || 0) + 1;
               }
+
+              // Champion: first win
+              if (index === 0) profile.achievements.champion = true;
+
+              // Veteran milestones
+              const played = profile.stats.games_played;
+              if (played >= 10) profile.achievements.veteran_10 = true;
+              if (played >= 25) profile.achievements.veteran_25 = true;
+              if (played >= 50) profile.achievements.veteran_50 = true;
+
+              // Role unlocks
+              if ((gameRoles[player_name] || []).includes('speed_demon')) profile.achievements.speed_demon_unlocked = true;
+              if ((gameRoles[player_name] || []).includes('risk_master')) profile.achievements.risk_master_unlocked = true;
             }
           });
           await fs.writeFile(path.join(DATA_DIR, "profiles.json"), JSON.stringify(profiles, null, 2));
 
+          // Compute season leaderboard
+          const season = getCurrentSeason();
+          let seasonLeaderboard: any[] = [];
           try {
             const gamesData = await fs.readFile(path.join(DATA_DIR, "games.json"), "utf8");
             let games = JSON.parse(gamesData);
             games.push({ id: gameId, date, categories, leaderboard });
             await fs.writeFile(path.join(DATA_DIR, "games.json"), JSON.stringify(games, null, 2));
+
+            const seasonGames = games.filter((g: any) => g.date >= season.start && g.date <= season.end);
+            const totals: Record<string, { name: string, points: number, games: number, wins: number }> = {};
+            seasonGames.forEach((game: any) => {
+              game.leaderboard.forEach(({ player_name, score }: any, idx: number) => {
+                if (!totals[player_name]) totals[player_name] = { name: player_name, points: 0, games: 0, wins: 0 };
+                totals[player_name].points += score;
+                totals[player_name].games++;
+                if (idx === 0) totals[player_name].wins++;
+              });
+            });
+            seasonLeaderboard = Object.values(totals).filter(p => p.games > 0).sort((a, b) => b.points - a.points);
           } catch(err) {
             console.error("Failed to update games.json", err);
           }
 
+          io.emit("game_over", { leaderboard, gameRoles, season: { ...season, leaderboard: seasonLeaderboard } });
           io.emit("profiles_updated", Object.entries(profiles).map(([name, data]) => ({ name, ...(data as any) })));
         } catch (e) {
           console.error("Failed to update profile histories", e);
