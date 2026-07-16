@@ -32,6 +32,12 @@ async function ensureDataFiles() {
     } catch {
       await fs.writeFile(path.join(DATA_DIR, "games.json"), JSON.stringify([]));
     }
+    // Initialize category database
+    try {
+      await fs.access(path.join(DATA_DIR, "categories.json"));
+    } catch {
+      await fs.writeFile(path.join(DATA_DIR, "categories.json"), JSON.stringify([]));
+    }
   } catch (err) {
     console.error("Failed to initialize data files", err);
   }
@@ -315,6 +321,76 @@ async function startServer() {
 
   app.get("/api/screw-types", (_req, res) => {
     res.json(SCREW_TYPES);
+  });
+
+  // Returns lowercased category names used in the last N played games (default 3)
+  async function getRecentlyUsedCategories(recentGames = 3): Promise<string[]> {
+    try {
+      const gamesData = await fs.readFile(path.join(DATA_DIR, "games.json"), "utf8");
+      const games = JSON.parse(gamesData);
+      const sorted = [...games].sort((a: any, b: any) => (b.date || "").localeCompare(a.date || ""));
+      const recent = sorted.slice(0, recentGames);
+      const used = new Set<string>();
+      recent.forEach((g: any) => (g.categories || []).forEach((c: string) => used.add(String(c).trim().toLowerCase())));
+      return Array.from(used);
+    } catch {
+      return [];
+    }
+  }
+
+  // Category database: list all stored categories + names blocked by recent games
+  app.get("/api/categories", async (_req, res) => {
+    try {
+      const data = await fs.readFile(path.join(DATA_DIR, "categories.json"), "utf8");
+      const categories = JSON.parse(data);
+      const recentlyUsed = await getRecentlyUsedCategories();
+      res.json({ categories, recentlyUsed });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Failed to load categories" });
+    }
+  });
+
+  // Upsert a category by name (originalName lets you rename in place)
+  app.post("/api/categories", async (req, res) => {
+    try {
+      const { name, tiles, originalName } = req.body;
+      if (!name || !String(name).trim()) return res.status(400).json({ error: "Name is required" });
+      const trimmed = String(name).trim();
+      const data = await fs.readFile(path.join(DATA_DIR, "categories.json"), "utf8");
+      let categories = JSON.parse(data);
+      const matchKey = (originalName || trimmed).toLowerCase();
+      const idx = categories.findIndex((c: any) => String(c.name).toLowerCase() === matchKey);
+      const entry = { name: trimmed, tiles: tiles || [] };
+      if (idx >= 0) {
+        categories[idx] = entry;
+      } else {
+        // Reject duplicate name when adding new
+        if (categories.some((c: any) => String(c.name).toLowerCase() === trimmed.toLowerCase())) {
+          return res.status(409).json({ error: "A category with this name already exists" });
+        }
+        categories.push(entry);
+      }
+      await fs.writeFile(path.join(DATA_DIR, "categories.json"), JSON.stringify(categories, null, 2));
+      res.json({ status: "ok", categories });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Failed to save category" });
+    }
+  });
+
+  app.delete("/api/categories/:name", async (req, res) => {
+    try {
+      const target = String(req.params.name).toLowerCase();
+      const data = await fs.readFile(path.join(DATA_DIR, "categories.json"), "utf8");
+      let categories = JSON.parse(data);
+      categories = categories.filter((c: any) => String(c.name).toLowerCase() !== target);
+      await fs.writeFile(path.join(DATA_DIR, "categories.json"), JSON.stringify(categories, null, 2));
+      res.json({ status: "ok", categories });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Failed to delete category" });
+    }
   });
 
   // Strips non-serializable fields (Set → Array, drops Timeout) before sending over the wire
