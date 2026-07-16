@@ -341,10 +341,36 @@ async function startServer() {
   }
 
   // Category database: list all stored categories + names blocked by recent games
+  // The category database is a simple pool of topic NAMES (strings), not full
+  // question sets — the host writes the questions themselves. A stored name may
+  // be dropped in as a column header (e.g. via the per-column Random button).
+  async function readCategoryNames(): Promise<string[]> {
+    const data = await fs.readFile(path.join(DATA_DIR, "categories.json"), "utf8");
+    const parsed = JSON.parse(data);
+    // Back-compat: tolerate the old {name, tiles} object form
+    return (Array.isArray(parsed) ? parsed : [])
+      .map((c: any) => (typeof c === "string" ? c : c?.name))
+      .filter((n: any) => typeof n === "string" && n.trim())
+      .map((n: string) => n.trim());
+  }
+
+  async function writeCategoryNames(names: string[]) {
+    // De-duplicate case-insensitively, preserving first-seen order
+    const seen = new Set<string>();
+    const out: string[] = [];
+    names.forEach(n => {
+      const key = n.trim().toLowerCase();
+      if (!n.trim() || seen.has(key)) return;
+      seen.add(key);
+      out.push(n.trim());
+    });
+    await fs.writeFile(path.join(DATA_DIR, "categories.json"), JSON.stringify(out, null, 2));
+    return out;
+  }
+
   app.get("/api/categories", async (_req, res) => {
     try {
-      const data = await fs.readFile(path.join(DATA_DIR, "categories.json"), "utf8");
-      const categories = JSON.parse(data);
+      const categories = await readCategoryNames();
       const recentlyUsed = await getRecentlyUsedCategories();
       res.json({ categories, recentlyUsed });
     } catch (err) {
@@ -353,27 +379,24 @@ async function startServer() {
     }
   });
 
-  // Upsert a category by name (originalName lets you rename in place)
+  // Add a name, or rename in place (originalName → name)
   app.post("/api/categories", async (req, res) => {
     try {
-      const { name, tiles, originalName } = req.body;
+      const { name, originalName } = req.body;
       if (!name || !String(name).trim()) return res.status(400).json({ error: "Name is required" });
       const trimmed = String(name).trim();
-      const data = await fs.readFile(path.join(DATA_DIR, "categories.json"), "utf8");
-      let categories = JSON.parse(data);
-      const matchKey = (originalName || trimmed).toLowerCase();
-      const idx = categories.findIndex((c: any) => String(c.name).toLowerCase() === matchKey);
-      const entry = { name: trimmed, tiles: tiles || [] };
-      if (idx >= 0) {
-        categories[idx] = entry;
+      let names = await readCategoryNames();
+      if (originalName) {
+        const idx = names.findIndex(n => n.toLowerCase() === String(originalName).toLowerCase());
+        if (idx >= 0) names[idx] = trimmed;
+        else names.push(trimmed);
       } else {
-        // Reject duplicate name when adding new
-        if (categories.some((c: any) => String(c.name).toLowerCase() === trimmed.toLowerCase())) {
-          return res.status(409).json({ error: "A category with this name already exists" });
+        if (names.some(n => n.toLowerCase() === trimmed.toLowerCase())) {
+          return res.status(409).json({ error: "That category already exists" });
         }
-        categories.push(entry);
+        names.push(trimmed);
       }
-      await fs.writeFile(path.join(DATA_DIR, "categories.json"), JSON.stringify(categories, null, 2));
+      const categories = await writeCategoryNames(names);
       res.json({ status: "ok", categories });
     } catch (err) {
       console.error(err);
@@ -384,10 +407,9 @@ async function startServer() {
   app.delete("/api/categories/:name", async (req, res) => {
     try {
       const target = String(req.params.name).toLowerCase();
-      const data = await fs.readFile(path.join(DATA_DIR, "categories.json"), "utf8");
-      let categories = JSON.parse(data);
-      categories = categories.filter((c: any) => String(c.name).toLowerCase() !== target);
-      await fs.writeFile(path.join(DATA_DIR, "categories.json"), JSON.stringify(categories, null, 2));
+      let names = await readCategoryNames();
+      names = names.filter(n => n.toLowerCase() !== target);
+      const categories = await writeCategoryNames(names);
       res.json({ status: "ok", categories });
     } catch (err) {
       console.error(err);
@@ -395,24 +417,21 @@ async function startServer() {
     }
   });
 
-  // Bulk upsert (used by spreadsheet import); upserts each incoming category by name
+  // Bulk add (used by spreadsheet import); merges incoming names into the pool
   app.post("/api/categories/bulk", async (req, res) => {
     try {
       const incoming = Array.isArray(req.body?.categories) ? req.body.categories : [];
-      if (incoming.length === 0) return res.status(400).json({ error: "No categories provided" });
-      const data = await fs.readFile(path.join(DATA_DIR, "categories.json"), "utf8");
-      let categories = JSON.parse(data);
-      let added = 0, updated = 0;
-      incoming.forEach((cat: any) => {
-        const name = String(cat?.name || "").trim();
-        if (!name) return;
-        const entry = { name, tiles: Array.isArray(cat.tiles) ? cat.tiles : [] };
-        const idx = categories.findIndex((c: any) => String(c.name).toLowerCase() === name.toLowerCase());
-        if (idx >= 0) { categories[idx] = entry; updated++; }
-        else { categories.push(entry); added++; }
-      });
-      await fs.writeFile(path.join(DATA_DIR, "categories.json"), JSON.stringify(categories, null, 2));
-      res.json({ status: "ok", categories, added, updated });
+      const cleaned = incoming
+        .map((c: any) => (typeof c === "string" ? c : c?.name))
+        .filter((n: any) => typeof n === "string" && n.trim())
+        .map((n: string) => n.trim());
+      if (cleaned.length === 0) return res.status(400).json({ error: "No category names provided" });
+      const existing = await readCategoryNames();
+      const existingLower = new Set(existing.map(n => n.toLowerCase()));
+      let added = 0;
+      cleaned.forEach((n: string) => { if (!existingLower.has(n.toLowerCase())) { existingLower.add(n.toLowerCase()); added++; } });
+      const categories = await writeCategoryNames([...existing, ...cleaned]);
+      res.json({ status: "ok", categories, added });
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: "Failed to import categories" });

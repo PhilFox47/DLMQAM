@@ -5,106 +5,19 @@ import clsx from "clsx";
 import { motion, AnimatePresence } from "motion/react";
 import * as XLSX from "xlsx";
 
-// Flat spreadsheet schema: one row per tile, grouped into categories by the Category column.
-const SHEET_COLUMNS = [
-  "Category", "Value", "Mode", "Question", "QuestionImageURL", "Answer", "AnswerImageURL",
-  "ChoiceA", "ChoiceB", "ChoiceC", "ChoiceD", "CorrectChoice", "CorrectValue",
-  "Double", "Risk", "TorT_CategoryA", "TorT_CategoryB", "TorT_Correct",
-];
-
-const truthy = (v: any) => ["yes", "true", "1", "x", "ja", "y"].includes(String(v ?? "").trim().toLowerCase());
-const LETTERS = ["A", "B", "C", "D"];
-
-const normalizeMode = (m: any) => {
-  const s = String(m ?? "buzzer").trim().toLowerCase();
-  if (["t/t", "thisorthat", "this or that", "tort"].includes(s)) return "thisorthat";
-  if (["buzzer", "guess", "choice", "text", "thisorthat"].includes(s)) return s;
-  return "buzzer";
-};
-
-// Convert stored categories → flat array-of-arrays (with header row) for the sheet
-const categoriesToRows = (categories: any[]) => {
-  const rows: any[][] = [SHEET_COLUMNS];
-  categories.forEach(cat => {
-    const tiles = [...(cat.tiles || [])].sort((a, b) => (a.value || 0) - (b.value || 0));
-    tiles.forEach(t => {
-      const mode = normalizeMode(t.mode);
-      rows.push([
-        cat.name,
-        t.value ?? "",
-        mode,
-        t.question?.content ?? "",
-        t.question?.src ?? "",
-        t.answer?.content ?? "",
-        t.answer?.src ?? "",
-        t.choices?.[0] ?? "",
-        t.choices?.[1] ?? "",
-        t.choices?.[2] ?? "",
-        t.choices?.[3] ?? "",
-        typeof t.correctIndex === "number" ? LETTERS[t.correctIndex] ?? "" : "",
-        t.correctValue ?? "",
-        t.double ? "yes" : "",
-        t.risk ? "yes" : "",
-        t.categoryA ?? "",
-        t.categoryB ?? "",
-        t.correctCategory ?? "",
-      ]);
-    });
-  });
-  return rows;
-};
-
-// Convert a sheet (array of row objects keyed by header) → categories with exactly 5 tiles each
-const rowsToCategories = (records: any[]) => {
-  const byName = new Map<string, any[]>();
-  const order: string[] = [];
-  records.forEach(r => {
-    const name = String(r.Category ?? "").trim();
-    if (!name) return;
-    if (!byName.has(name)) { byName.set(name, []); order.push(name); }
-    byName.get(name)!.push(r);
-  });
-
-  return order.map(name => {
-    const rowList = byName.get(name)!;
-    // Build 5 fixed value slots (100..500); fill from matching rows, else empty tile
-    const slots = [100, 200, 300, 400, 500];
-    const tiles = slots.map((slotValue, i) => {
-      const match = rowList.find(r => Number(r.Value) === slotValue) || rowList[i];
-      if (!match) {
-        return {
-          value: slotValue, mode: "buzzer",
-          question: { type: "text", content: "" }, answer: { type: "text", content: "" },
-          choices: ["", "", "", ""], correctIndex: null, correctValue: null, double: false, risk: false,
-        };
-      }
-      const mode = normalizeMode(match.Mode);
-      const qsrc = String(match.QuestionImageURL ?? "").trim();
-      const asrc = String(match.AnswerImageURL ?? "").trim();
-      const correctChoiceLetter = String(match.CorrectChoice ?? "").trim().toUpperCase();
-      const correctIndex = LETTERS.indexOf(correctChoiceLetter);
-      const cvRaw = String(match.CorrectValue ?? "").trim().replace(",", ".");
-      const cv = cvRaw === "" ? null : (isNaN(Number(cvRaw)) ? null : Number(cvRaw));
-      const tort = String(match.TorT_Correct ?? "").trim().toUpperCase();
-      return {
-        value: Number(match.Value) || slotValue,
-        mode,
-        question: { type: qsrc ? "image" : "text", content: String(match.Question ?? ""), ...(qsrc ? { src: qsrc } : {}) },
-        answer: { type: asrc ? "image" : "text", content: String(match.Answer ?? ""), ...(asrc ? { src: asrc } : {}) },
-        choices: [match.ChoiceA ?? "", match.ChoiceB ?? "", match.ChoiceC ?? "", match.ChoiceD ?? ""].map(x => String(x ?? "")),
-        correctIndex: correctIndex >= 0 ? correctIndex : null,
-        correctValue: cv,
-        double: truthy(match.Double),
-        risk: truthy(match.Risk),
-        ...(mode === "thisorthat" ? {
-          categoryA: String(match.TorT_CategoryA ?? ""),
-          categoryB: String(match.TorT_CategoryB ?? ""),
-          correctCategory: tort === "A" || tort === "B" ? tort : undefined,
-        } : {}),
-      };
-    });
-    return { name, tiles };
-  });
+// The category database is a simple pool of topic NAMES. The spreadsheet is a
+// single "Category" column — one name per row.
+const extractNamesFromRecords = (records: any[]): string[] => {
+  return records
+    .map(r => {
+      if (typeof r === "string") return r;
+      // Accept a "Category" column (any case) or the first column value
+      const key = Object.keys(r).find(k => k.trim().toLowerCase() === "category");
+      return key ? r[key] : Object.values(r)[0];
+    })
+    .filter(v => typeof v === "string" || typeof v === "number")
+    .map(v => String(v).trim())
+    .filter(Boolean);
 };
 
 const emptyTiles = () => {
@@ -127,31 +40,15 @@ const emptyTiles = () => {
 
 const clone = (x: any) => JSON.parse(JSON.stringify(x));
 
-const tileHasContent = (tile: any) => {
-  const tMode = tile.mode || 'buzzer';
-  const hasQ = !!(tile.question?.content || tile.question?.src);
-  const hasA = !!(tile.answer?.content || tile.answer?.src);
-  if (!(hasQ && hasA)) return false;
-  if (tMode === 'buzzer' || tMode === 'text') return true;
-  if (tMode === 'choice') {
-    const hasChoices = tile.choices && tile.choices.filter((x: string) => !!x).length >= 2;
-    return !!(hasChoices && typeof tile.correctIndex === 'number' && tile.correctIndex >= 0);
-  }
-  if (tMode === 'guess') return typeof tile.correctValue === 'number';
-  if (tMode === 'thisorthat') return !!(tile.categoryA && tile.categoryB && tile.correctCategory);
-  return false;
-};
-
-const filledCount = (tiles: any[]) => (tiles || []).filter(tileHasContent).length;
-
 export default function BoardEditor() {
   const [boardData, setBoardData] = useState<any>(null);
   const [editingTile, setEditingTile] = useState<any>(null);
   const [catHover, setCatHover] = useState(-1);
-  const [categoryDb, setCategoryDb] = useState<any[]>([]);
+  const [categoryDb, setCategoryDb] = useState<string[]>([]);
   const [recentlyUsed, setRecentlyUsed] = useState<string[]>([]);
   const [showCatDb, setShowCatDb] = useState(false);
   const [dbNotice, setDbNotice] = useState<string | null>(null);
+  const [newCatName, setNewCatName] = useState("");
 
   const loadCategoryDb = () => {
     fetch("/api/categories")
@@ -172,43 +69,77 @@ export default function BoardEditor() {
 
   const isRecentlyUsed = (name: string) => recentlyUsed.includes(String(name).trim().toLowerCase());
 
+  // Random button: fills only the column's NAME from the pool, leaving the
+  // questions untouched. Skips names used in the last 3 games and names
+  // already on the current board.
   const pickRandomCategory = (cIdx: number) => {
     if (!boardData) return;
     const onBoard = new Set(
       boardData.categories.map((c: any, i: number) => i !== cIdx ? String(c.name).trim().toLowerCase() : null).filter(Boolean)
     );
-    const eligible = categoryDb.filter(c => {
-      const key = String(c.name).trim().toLowerCase();
-      return !isRecentlyUsed(c.name) && !onBoard.has(key) && (c.tiles || []).length > 0;
+    const eligible = categoryDb.filter(name => {
+      const key = name.trim().toLowerCase();
+      return !isRecentlyUsed(name) && !onBoard.has(key);
     });
     if (eligible.length === 0) {
-      flashNotice("No eligible categories — add more to the database, or all are used in the last 3 games.");
+      flashNotice("No eligible category names — add more to the database, or all are used in the last 3 games / already on the board.");
       return;
     }
     const chosen = eligible[Math.floor(Math.random() * eligible.length)];
     const nb = clone(boardData);
-    nb.categories[cIdx] = { name: chosen.name, tiles: clone(chosen.tiles) };
+    nb.categories[cIdx].name = chosen;
     setBoardData(nb);
-    flashNotice(`Column ${cIdx + 1} → "${chosen.name}"`);
+    flashNotice(`Column ${cIdx + 1} → "${chosen}"`);
   };
 
-  const saveColumnToDb = async (cIdx: number, originalName?: string) => {
+  // Save this column's current name into the pool
+  const saveColumnNameToDb = async (cIdx: number) => {
     if (!boardData) return;
-    const col = boardData.categories[cIdx];
-    if (!col?.name?.trim()) { flashNotice("Give the column a name first."); return; }
+    const name = String(boardData.categories[cIdx]?.name || "").trim();
+    if (!name) { flashNotice("Give the column a name first."); return; }
     try {
       const res = await fetch("/api/categories", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: col.name.trim(), tiles: clone(col.tiles), originalName })
+        body: JSON.stringify({ name })
       });
       const data = await res.json();
       if (!res.ok) { flashNotice(data.error || "Save failed"); return; }
       setCategoryDb(data.categories || []);
-      flashNotice(`Saved "${col.name.trim()}" to database.`);
+      flashNotice(`Saved "${name}" to the category pool.`);
     } catch {
       flashNotice("Save failed");
     }
+  };
+
+  const addCategoryName = async () => {
+    const name = newCatName.trim();
+    if (!name) return;
+    try {
+      const res = await fetch("/api/categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name })
+      });
+      const data = await res.json();
+      if (!res.ok) { flashNotice(data.error || "Could not add"); return; }
+      setCategoryDb(data.categories || []);
+      setNewCatName("");
+    } catch { flashNotice("Could not add"); }
+  };
+
+  const renameCategory = async (originalName: string, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed || trimmed.toLowerCase() === originalName.toLowerCase()) return;
+    try {
+      const res = await fetch("/api/categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmed, originalName })
+      });
+      const data = await res.json();
+      if (res.ok) setCategoryDb(data.categories || []);
+    } catch {}
   };
 
   const deleteFromDb = async (name: string) => {
@@ -219,55 +150,24 @@ export default function BoardEditor() {
     } catch {}
   };
 
-  const addEmptyDbCategory = async () => {
-    let base = "New Category";
-    let name = base;
-    let n = 1;
-    const lower = categoryDb.map(c => String(c.name).toLowerCase());
-    while (lower.includes(name.toLowerCase())) { n++; name = `${base} ${n}`; }
-    try {
-      const res = await fetch("/api/categories", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, tiles: emptyTiles() })
-      });
-      const data = await res.json();
-      if (res.ok) setCategoryDb(data.categories || []);
-    } catch {}
-  };
-
-  const loadDbCategoryToColumn = (dbCat: any, cIdx: number) => {
-    if (!boardData) return;
-    const nb = clone(boardData);
-    nb.categories[cIdx] = { name: dbCat.name, tiles: clone(dbCat.tiles) };
-    setBoardData(nb);
-    flashNotice(`Loaded "${dbCat.name}" into column ${cIdx + 1}.`);
-  };
-
   const downloadSheet = (rows: any[][], filename: string) => {
     const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws["!cols"] = SHEET_COLUMNS.map(h => ({ wch: Math.max(12, h.length + 2) }));
+    ws["!cols"] = [{ wch: 32 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Categories");
     XLSX.writeFile(wb, filename);
   };
 
   const exportCategoryDb = () => {
-    if (categoryDb.length === 0) { flashNotice("Database is empty — nothing to export."); return; }
-    downloadSheet(categoriesToRows(categoryDb), "category_database.xlsx");
+    if (categoryDb.length === 0) { flashNotice("Pool is empty — nothing to export."); return; }
+    downloadSheet([["Category"], ...categoryDb.map(n => [n])], "categories.xlsx");
   };
 
   const downloadTemplate = () => {
-    // Header + a few illustrative example rows covering the different modes
-    const example = [
-      SHEET_COLUMNS,
-      ["Example Category", 100, "buzzer", "What is the capital of France?", "", "Paris", "", "", "", "", "", "", "", "", "", "", "", ""],
-      ["Example Category", 200, "choice", "Which planet is the Red Planet?", "", "Mars", "", "Venus", "Mars", "Jupiter", "Saturn", "B", "", "", "", "", "", ""],
-      ["Example Category", 300, "guess", "How many bones in the adult human body?", "", "206", "", "", "", "", "", "", "206", "", "", "", "", ""],
-      ["Example Category", 400, "thisorthat", "Tomato", "", "It is botanically a fruit.", "", "", "", "", "", "", "", "", "", "Fruit", "Vegetable", "A"],
-      ["Example Category", 500, "buzzer", "Double + Risk example question?", "", "The answer", "", "", "", "", "", "", "", "yes", "yes", "", "", ""],
-    ];
-    downloadSheet(example, "category_template.xlsx");
+    downloadSheet(
+      [["Category"], ["Allgemeinwissen"], ["Geschichte"], ["Musik"], ["Sport"], ["Filme & Serien"]],
+      "categories_template.xlsx"
+    );
   };
 
   const importSheet = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -279,17 +179,17 @@ export default function BoardEditor() {
       const wb = XLSX.read(buf, { type: "array" });
       const ws = wb.Sheets[wb.SheetNames[0]];
       const records: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
-      const cats = rowsToCategories(records);
-      if (cats.length === 0) { flashNotice("No categories found in the file. Check the Category column."); return; }
+      const names = extractNamesFromRecords(records);
+      if (names.length === 0) { flashNotice("No category names found. Use a single 'Category' column."); return; }
       const res = await fetch("/api/categories/bulk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ categories: cats }),
+        body: JSON.stringify({ categories: names }),
       });
       const data = await res.json();
       if (!res.ok) { flashNotice(data.error || "Import failed"); return; }
       setCategoryDb(data.categories || []);
-      flashNotice(`Imported ${cats.length} categor${cats.length === 1 ? "y" : "ies"} (${data.added} new, ${data.updated} updated).`);
+      flashNotice(`Imported ${names.length} name${names.length === 1 ? "" : "s"} (${data.added} new).`);
     } catch (err) {
       flashNotice("Could not read that file — is it a valid .xlsx/.csv?");
     }
@@ -389,14 +289,14 @@ export default function BoardEditor() {
                   <div className="flex justify-center gap-2 mt-2">
                     <button
                       onClick={() => pickRandomCategory(cIdx)}
-                      title="Fill this column with a random category from the database (excludes the last 3 games)"
+                      title="Pick a random category name from the pool (skips the last 3 games' categories)"
                       className="flex items-center gap-1 px-2 py-1 border-2 border-yellow-400 text-yellow-400 text-[10px] font-black uppercase tracking-widest hover:bg-yellow-400 hover:text-black transition-colors"
                     >
                       <Dice5 size={14}/> Random
                     </button>
                     <button
-                      onClick={() => saveColumnToDb(cIdx)}
-                      title="Save this column as a category in the database"
+                      onClick={() => saveColumnNameToDb(cIdx)}
+                      title="Save this column's name to the category pool"
                       className="flex items-center gap-1 px-2 py-1 border-2 border-yellow-400 text-yellow-400 text-[10px] font-black uppercase tracking-widest hover:bg-yellow-400 hover:text-black transition-colors"
                     >
                       <Save size={14}/> To DB
@@ -620,13 +520,11 @@ export default function BoardEditor() {
               </div>
 
               <p className="text-sm font-bold text-zinc-500 mb-4">
-                Stored categories power the per-column <span className="text-purple-600 font-black">Random</span> button.
-                Categories used in the last 3 games are skipped by Random (marked below).
+                A pool of topic names to pick from — you write the questions yourself. These power the per-column
+                <span className="text-purple-600 font-black"> Random</span> button.
+                Names used in the last 3 games are skipped by Random (marked <span className="text-red-600 font-black">Recent</span>).
               </p>
               <div className="flex flex-wrap items-center gap-3 mb-6">
-                <button onClick={addEmptyDbCategory} className="flex items-center gap-2 px-4 py-2 border-4 border-black bg-emerald-400 text-black font-black uppercase text-sm tracking-widest brutal-shadow-sm active:translate-y-1 hover:bg-emerald-300 transition-all">
-                  <Plus size={18}/> Add Empty
-                </button>
                 <label className="flex items-center gap-2 px-4 py-2 border-4 border-black bg-blue-400 text-black font-black uppercase text-sm tracking-widest brutal-shadow-sm active:translate-y-1 hover:bg-blue-300 transition-all cursor-pointer">
                   <Upload size={18}/> Import
                   <input type="file" accept=".xlsx,.xls,.csv" onChange={importSheet} className="hidden" />
@@ -639,75 +537,55 @@ export default function BoardEditor() {
                 </button>
               </div>
 
+              <div className="flex gap-2 mb-6">
+                <input
+                  value={newCatName}
+                  onChange={e => setNewCatName(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") addCategoryName(); }}
+                  placeholder="Add a category name…"
+                  className="flex-1 bg-white brutal-border text-black font-black text-lg p-3 focus:outline-none focus:bg-yellow-50"
+                />
+                <button onClick={addCategoryName} className="flex items-center gap-2 px-4 border-4 border-black bg-emerald-400 text-black font-black uppercase text-sm tracking-widest brutal-shadow-sm active:translate-y-1 hover:bg-emerald-300 transition-all">
+                  <Plus size={18}/> Add
+                </button>
+              </div>
+
               {categoryDb.length === 0 ? (
                 <div className="border-4 border-dashed border-zinc-300 p-12 text-center text-zinc-400 font-black uppercase tracking-widest">
-                  No categories yet. Build a column on the board and hit "To DB", or add an empty one.
+                  No category names yet. Add one above, or import a list.
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {categoryDb.map((cat, i) => {
-                    const done = filledCount(cat.tiles);
-                    const blocked = isRecentlyUsed(cat.name);
-                    return (
-                      <div key={i} className={clsx("border-4 border-black p-4", blocked ? "bg-zinc-100" : "bg-white")}>
-                        <div className="flex flex-wrap items-center gap-3 justify-between">
-                          <div className="flex items-center gap-3 flex-1 min-w-[200px]">
-                            <input
-                              value={cat.name}
-                              onChange={e => {
-                                const nb = [...categoryDb];
-                                nb[i] = { ...nb[i], name: e.target.value };
-                                setCategoryDb(nb);
-                              }}
-                              onBlur={e => {
-                                const newName = e.target.value.trim();
-                                if (newName && newName.toLowerCase() !== String(cat.name).toLowerCase()) {
-                                  // rename in place via originalName
-                                  fetch("/api/categories", {
-                                    method: "POST",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ name: newName, tiles: cat.tiles, originalName: cat.name })
-                                  }).then(r => r.json()).then(d => { if (d.categories) setCategoryDb(d.categories); });
-                                }
-                              }}
-                              className="flex-1 min-w-0 bg-transparent border-b-2 border-zinc-300 focus:border-purple-500 text-xl font-black uppercase italic tracking-tighter focus:outline-none"
-                            />
-                            <span className={clsx("text-xs font-black uppercase px-2 py-1 border-2 border-black whitespace-nowrap", done === 5 ? "bg-emerald-400" : "bg-yellow-300")}>{done}/5</span>
-                            {blocked && <span className="text-[10px] font-black uppercase px-2 py-1 border-2 border-red-500 bg-red-100 text-red-600 whitespace-nowrap" title="Used in the last 3 games — skipped by Random">Recent</span>}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {boardData && (
-                              <select
-                                defaultValue=""
-                                onChange={e => { if (e.target.value !== "") { loadDbCategoryToColumn(cat, parseInt(e.target.value)); e.target.value = ""; } }}
-                                className="text-xs font-black uppercase border-2 border-black bg-white px-2 py-2 focus:outline-none cursor-pointer"
-                              >
-                                <option value="">Load to…</option>
-                                {boardData.categories.map((_: any, ci: number) => (
-                                  <option key={ci} value={ci}>Column {ci + 1}</option>
-                                ))}
-                              </select>
-                            )}
-                            <button
-                              onClick={() => { if (confirm(`Delete category "${cat.name}" from the database?`)) deleteFromDb(cat.name); }}
-                              className="p-2 border-2 border-black bg-red-500 text-white hover:bg-red-400 transition-colors"
-                              title="Delete from database"
-                            >
-                              <Trash size={16}/>
-                            </button>
-                          </div>
+                <>
+                  <div className="text-xs font-black uppercase tracking-widest text-zinc-400 mb-3">{categoryDb.length} categories in pool</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {categoryDb.map((cat, i) => {
+                      const blocked = isRecentlyUsed(cat);
+                      return (
+                        <div key={i} className={clsx("flex items-center gap-2 border-4 border-black px-3 py-2", blocked ? "bg-zinc-100" : "bg-white")}>
+                          <input
+                            defaultValue={cat}
+                            onBlur={e => renameCategory(cat, e.target.value)}
+                            onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                            className="flex-1 min-w-0 bg-transparent border-b-2 border-transparent focus:border-purple-500 text-base font-black uppercase italic tracking-tight focus:outline-none"
+                          />
+                          {blocked && <span className="text-[9px] font-black uppercase px-1.5 py-0.5 border-2 border-red-500 bg-red-100 text-red-600 whitespace-nowrap" title="Used in the last 3 games — skipped by Random">Recent</span>}
+                          <button
+                            onClick={() => deleteFromDb(cat)}
+                            className="p-1.5 border-2 border-black bg-red-500 text-white hover:bg-red-400 transition-colors shrink-0"
+                            title="Remove from pool"
+                          >
+                            <Trash size={14}/>
+                          </button>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                </>
               )}
 
-              {boardData && (
-                <p className="text-xs text-zinc-400 font-bold mt-6 pt-4 border-t-2 border-zinc-200">
-                  To edit a category's questions: load it into a board column, edit the tiles, then use that column's "To DB" button to save your changes back.
-                </p>
-              )}
+              <p className="text-xs text-zinc-400 font-bold mt-6 pt-4 border-t-2 border-zinc-200">
+                Import/Export use a single <span className="font-black">Category</span> column (.xlsx or .csv) — one name per row.
+              </p>
             </motion.div>
           </div>
         )}
