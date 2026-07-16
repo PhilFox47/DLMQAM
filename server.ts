@@ -7,6 +7,8 @@ import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
 
+import { STARTER_CATEGORIES } from "./starterCategories";
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DATA_DIR = path.join(__dirname, "data");
@@ -32,11 +34,11 @@ async function ensureDataFiles() {
     } catch {
       await fs.writeFile(path.join(DATA_DIR, "games.json"), JSON.stringify([]));
     }
-    // Initialize category database
+    // Initialize category database (seed with starter categories on first run)
     try {
       await fs.access(path.join(DATA_DIR, "categories.json"));
     } catch {
-      await fs.writeFile(path.join(DATA_DIR, "categories.json"), JSON.stringify([]));
+      await fs.writeFile(path.join(DATA_DIR, "categories.json"), JSON.stringify(STARTER_CATEGORIES, null, 2));
     }
   } catch (err) {
     console.error("Failed to initialize data files", err);
@@ -390,6 +392,30 @@ async function startServer() {
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: "Failed to delete category" });
+    }
+  });
+
+  // Bulk upsert (used by spreadsheet import); upserts each incoming category by name
+  app.post("/api/categories/bulk", async (req, res) => {
+    try {
+      const incoming = Array.isArray(req.body?.categories) ? req.body.categories : [];
+      if (incoming.length === 0) return res.status(400).json({ error: "No categories provided" });
+      const data = await fs.readFile(path.join(DATA_DIR, "categories.json"), "utf8");
+      let categories = JSON.parse(data);
+      let added = 0, updated = 0;
+      incoming.forEach((cat: any) => {
+        const name = String(cat?.name || "").trim();
+        if (!name) return;
+        const entry = { name, tiles: Array.isArray(cat.tiles) ? cat.tiles : [] };
+        const idx = categories.findIndex((c: any) => String(c.name).toLowerCase() === name.toLowerCase());
+        if (idx >= 0) { categories[idx] = entry; updated++; }
+        else { categories.push(entry); added++; }
+      });
+      await fs.writeFile(path.join(DATA_DIR, "categories.json"), JSON.stringify(categories, null, 2));
+      res.json({ status: "ok", categories, added, updated });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Failed to import categories" });
     }
   });
 

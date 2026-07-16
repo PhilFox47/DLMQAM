@@ -1,8 +1,111 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { Save, Upload, Download, Trash, Plus, Check, X, Dice5, Database } from "lucide-react";
+import { Save, Upload, Download, Trash, Plus, Check, X, Dice5, Database, FileSpreadsheet } from "lucide-react";
 import clsx from "clsx";
 import { motion, AnimatePresence } from "motion/react";
+import * as XLSX from "xlsx";
+
+// Flat spreadsheet schema: one row per tile, grouped into categories by the Category column.
+const SHEET_COLUMNS = [
+  "Category", "Value", "Mode", "Question", "QuestionImageURL", "Answer", "AnswerImageURL",
+  "ChoiceA", "ChoiceB", "ChoiceC", "ChoiceD", "CorrectChoice", "CorrectValue",
+  "Double", "Risk", "TorT_CategoryA", "TorT_CategoryB", "TorT_Correct",
+];
+
+const truthy = (v: any) => ["yes", "true", "1", "x", "ja", "y"].includes(String(v ?? "").trim().toLowerCase());
+const LETTERS = ["A", "B", "C", "D"];
+
+const normalizeMode = (m: any) => {
+  const s = String(m ?? "buzzer").trim().toLowerCase();
+  if (["t/t", "thisorthat", "this or that", "tort"].includes(s)) return "thisorthat";
+  if (["buzzer", "guess", "choice", "text", "thisorthat"].includes(s)) return s;
+  return "buzzer";
+};
+
+// Convert stored categories → flat array-of-arrays (with header row) for the sheet
+const categoriesToRows = (categories: any[]) => {
+  const rows: any[][] = [SHEET_COLUMNS];
+  categories.forEach(cat => {
+    const tiles = [...(cat.tiles || [])].sort((a, b) => (a.value || 0) - (b.value || 0));
+    tiles.forEach(t => {
+      const mode = normalizeMode(t.mode);
+      rows.push([
+        cat.name,
+        t.value ?? "",
+        mode,
+        t.question?.content ?? "",
+        t.question?.src ?? "",
+        t.answer?.content ?? "",
+        t.answer?.src ?? "",
+        t.choices?.[0] ?? "",
+        t.choices?.[1] ?? "",
+        t.choices?.[2] ?? "",
+        t.choices?.[3] ?? "",
+        typeof t.correctIndex === "number" ? LETTERS[t.correctIndex] ?? "" : "",
+        t.correctValue ?? "",
+        t.double ? "yes" : "",
+        t.risk ? "yes" : "",
+        t.categoryA ?? "",
+        t.categoryB ?? "",
+        t.correctCategory ?? "",
+      ]);
+    });
+  });
+  return rows;
+};
+
+// Convert a sheet (array of row objects keyed by header) → categories with exactly 5 tiles each
+const rowsToCategories = (records: any[]) => {
+  const byName = new Map<string, any[]>();
+  const order: string[] = [];
+  records.forEach(r => {
+    const name = String(r.Category ?? "").trim();
+    if (!name) return;
+    if (!byName.has(name)) { byName.set(name, []); order.push(name); }
+    byName.get(name)!.push(r);
+  });
+
+  return order.map(name => {
+    const rowList = byName.get(name)!;
+    // Build 5 fixed value slots (100..500); fill from matching rows, else empty tile
+    const slots = [100, 200, 300, 400, 500];
+    const tiles = slots.map((slotValue, i) => {
+      const match = rowList.find(r => Number(r.Value) === slotValue) || rowList[i];
+      if (!match) {
+        return {
+          value: slotValue, mode: "buzzer",
+          question: { type: "text", content: "" }, answer: { type: "text", content: "" },
+          choices: ["", "", "", ""], correctIndex: null, correctValue: null, double: false, risk: false,
+        };
+      }
+      const mode = normalizeMode(match.Mode);
+      const qsrc = String(match.QuestionImageURL ?? "").trim();
+      const asrc = String(match.AnswerImageURL ?? "").trim();
+      const correctChoiceLetter = String(match.CorrectChoice ?? "").trim().toUpperCase();
+      const correctIndex = LETTERS.indexOf(correctChoiceLetter);
+      const cvRaw = String(match.CorrectValue ?? "").trim().replace(",", ".");
+      const cv = cvRaw === "" ? null : (isNaN(Number(cvRaw)) ? null : Number(cvRaw));
+      const tort = String(match.TorT_Correct ?? "").trim().toUpperCase();
+      return {
+        value: Number(match.Value) || slotValue,
+        mode,
+        question: { type: qsrc ? "image" : "text", content: String(match.Question ?? ""), ...(qsrc ? { src: qsrc } : {}) },
+        answer: { type: asrc ? "image" : "text", content: String(match.Answer ?? ""), ...(asrc ? { src: asrc } : {}) },
+        choices: [match.ChoiceA ?? "", match.ChoiceB ?? "", match.ChoiceC ?? "", match.ChoiceD ?? ""].map(x => String(x ?? "")),
+        correctIndex: correctIndex >= 0 ? correctIndex : null,
+        correctValue: cv,
+        double: truthy(match.Double),
+        risk: truthy(match.Risk),
+        ...(mode === "thisorthat" ? {
+          categoryA: String(match.TorT_CategoryA ?? ""),
+          categoryB: String(match.TorT_CategoryB ?? ""),
+          correctCategory: tort === "A" || tort === "B" ? tort : undefined,
+        } : {}),
+      };
+    });
+    return { name, tiles };
+  });
+};
 
 const emptyTiles = () => {
   const tiles: any[] = [];
@@ -139,6 +242,57 @@ export default function BoardEditor() {
     nb.categories[cIdx] = { name: dbCat.name, tiles: clone(dbCat.tiles) };
     setBoardData(nb);
     flashNotice(`Loaded "${dbCat.name}" into column ${cIdx + 1}.`);
+  };
+
+  const downloadSheet = (rows: any[][], filename: string) => {
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"] = SHEET_COLUMNS.map(h => ({ wch: Math.max(12, h.length + 2) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Categories");
+    XLSX.writeFile(wb, filename);
+  };
+
+  const exportCategoryDb = () => {
+    if (categoryDb.length === 0) { flashNotice("Database is empty — nothing to export."); return; }
+    downloadSheet(categoriesToRows(categoryDb), "category_database.xlsx");
+  };
+
+  const downloadTemplate = () => {
+    // Header + a few illustrative example rows covering the different modes
+    const example = [
+      SHEET_COLUMNS,
+      ["Example Category", 100, "buzzer", "What is the capital of France?", "", "Paris", "", "", "", "", "", "", "", "", "", "", "", ""],
+      ["Example Category", 200, "choice", "Which planet is the Red Planet?", "", "Mars", "", "Venus", "Mars", "Jupiter", "Saturn", "B", "", "", "", "", "", ""],
+      ["Example Category", 300, "guess", "How many bones in the adult human body?", "", "206", "", "", "", "", "", "", "206", "", "", "", "", ""],
+      ["Example Category", 400, "thisorthat", "Tomato", "", "It is botanically a fruit.", "", "", "", "", "", "", "", "", "", "Fruit", "Vegetable", "A"],
+      ["Example Category", 500, "buzzer", "Double + Risk example question?", "", "The answer", "", "", "", "", "", "", "", "yes", "yes", "", "", ""],
+    ];
+    downloadSheet(example, "category_template.xlsx");
+  };
+
+  const importSheet = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const records: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
+      const cats = rowsToCategories(records);
+      if (cats.length === 0) { flashNotice("No categories found in the file. Check the Category column."); return; }
+      const res = await fetch("/api/categories/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ categories: cats }),
+      });
+      const data = await res.json();
+      if (!res.ok) { flashNotice(data.error || "Import failed"); return; }
+      setCategoryDb(data.categories || []);
+      flashNotice(`Imported ${cats.length} categor${cats.length === 1 ? "y" : "ies"} (${data.added} new, ${data.updated} updated).`);
+    } catch (err) {
+      flashNotice("Could not read that file — is it a valid .xlsx/.csv?");
+    }
   };
 
   const initBoard = () => {
@@ -465,13 +619,23 @@ export default function BoardEditor() {
                 <button onClick={() => setShowCatDb(false)} className="text-white hover:text-zinc-300 transition-colors"><X size={32}/></button>
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-                <p className="text-sm font-bold text-zinc-500 max-w-md">
-                  Stored categories power the per-column <span className="text-purple-600 font-black">Random</span> button.
-                  Categories used in the last 3 games are skipped by Random (marked below).
-                </p>
+              <p className="text-sm font-bold text-zinc-500 mb-4">
+                Stored categories power the per-column <span className="text-purple-600 font-black">Random</span> button.
+                Categories used in the last 3 games are skipped by Random (marked below).
+              </p>
+              <div className="flex flex-wrap items-center gap-3 mb-6">
                 <button onClick={addEmptyDbCategory} className="flex items-center gap-2 px-4 py-2 border-4 border-black bg-emerald-400 text-black font-black uppercase text-sm tracking-widest brutal-shadow-sm active:translate-y-1 hover:bg-emerald-300 transition-all">
                   <Plus size={18}/> Add Empty
+                </button>
+                <label className="flex items-center gap-2 px-4 py-2 border-4 border-black bg-blue-400 text-black font-black uppercase text-sm tracking-widest brutal-shadow-sm active:translate-y-1 hover:bg-blue-300 transition-all cursor-pointer">
+                  <Upload size={18}/> Import
+                  <input type="file" accept=".xlsx,.xls,.csv" onChange={importSheet} className="hidden" />
+                </label>
+                <button onClick={exportCategoryDb} className="flex items-center gap-2 px-4 py-2 border-4 border-black bg-white text-black font-black uppercase text-sm tracking-widest brutal-shadow-sm active:translate-y-1 hover:bg-zinc-100 transition-all">
+                  <Download size={18}/> Export
+                </button>
+                <button onClick={downloadTemplate} className="flex items-center gap-2 px-4 py-2 border-4 border-black bg-yellow-400 text-black font-black uppercase text-sm tracking-widest brutal-shadow-sm active:translate-y-1 hover:bg-yellow-300 transition-all">
+                  <FileSpreadsheet size={18}/> Template
                 </button>
               </div>
 
