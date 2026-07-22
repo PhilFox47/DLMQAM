@@ -41,6 +41,25 @@ export default function PlayerView() {
   const [renames, setRenames] = useState<Record<string, string>>({});
 
   const buzzerSoundRef = useRef<HTMLAudioElement | null>(null);
+  const eulaScrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Enable the EULA accept button once the reader reaches the bottom.
+  // If the content already fits without scrolling, enable immediately so it never locks.
+  const checkEulaScrolled = (el: HTMLDivElement | null) => {
+    if (!el) return;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 24) setEulaScrolled(true);
+  };
+
+  useEffect(() => {
+    if (!showEulaModal) return;
+    setEulaScrolled(false);
+    const id = requestAnimationFrame(() => {
+      const el = eulaScrollRef.current;
+      // Only auto-enable if the text genuinely can't be scrolled on this screen
+      if (el && el.scrollHeight <= el.clientHeight + 4) setEulaScrolled(true);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [showEulaModal]);
 
   const playTickSound = () => {
     try {
@@ -949,31 +968,47 @@ export default function PlayerView() {
 
   const displayName = (pid: string, fallback: string) => renames[pid] || fallback;
 
-  const EULA_TEXT = `END USER LICENSE AGREEMENT — DLMQAM QUIZ PARTICIPATION AGREEMENT v42.0
+  const EULA_TEXT = `END USER LICENSE AGREEMENT — DLMQAM QUIZ PARTICIPATION AGREEMENT v42.0.7 (rev. Q3)
 
-PLEASE READ THIS AGREEMENT CAREFULLY BEFORE ANSWERING ANY QUESTIONS. BY PRESSING A BUTTON OR HAVING AN OPINION, YOU AGREE TO ALL TERMS HEREIN, INCLUDING THE TERMS YOU HAVE NOT YET READ AND THOSE WRITTEN IN A FONT SIZE OF 0.
+PLEASE READ THIS AGREEMENT CAREFULLY BEFORE ANSWERING ANY QUESTIONS. BY PRESSING A BUTTON, FORMING A THOUGHT, OR MERELY HAVING AN OPINION, YOU AGREE TO ALL TERMS HEREIN, INCLUDING THE TERMS YOU HAVE NOT YET READ, THE TERMS WRITTEN IN A FONT SIZE OF 0, AND ANY TERMS WE MAY INVENT LATER AND BACKDATE TO NOW.
 
-1. GRANT OF LICENSE. You are hereby granted a limited, non-exclusive, non-transferable, revocable license to exist in the same room as the quiz board. This license may be revoked at any time for any reason, including but not limited to: winning too many points, having an unfair advantage due to general knowledge, or making the host feel bad.
+PREAMBLE. WHEREAS you wish to participate in a quiz; and WHEREAS we wish to make that experience needlessly legalistic; and WHEREAS neither party has consulted an actual lawyer; NOW THEREFORE, in consideration of the mutual promises below and one (1) imaginary peppercorn, the parties agree as follows.
 
-2. RESTRICTION ON FUN. You agree not to have an unreasonable amount of fun without first consulting the Fun Allowance Committee (FAC). The FAC shall meet quarterly, except in Q2, when it doesn't feel like it.
+0. DEFINITIONS. "Quiz" means the quiz. "Player" means you, the poor soul reading this. "Host" means the benevolent-yet-capricious operator of the Quiz. "Screw" means a mechanism by which one Player may inconvenience another for entertainment purposes. "Fun" is defined in Schedule C, which does not exist. "Reasonable" means whatever the Host says it means after the fact.
 
-3. INTELLECTUAL PROPERTY. Any and all answers you provide, thoughts you have, or guesses you make during the course of the quiz become the intellectual property of DLMQAM Corp GmbH Ltd. You retain no rights to your own cleverness.
+1. GRANT OF LICENSE. You are hereby granted a limited, non-exclusive, non-transferable, revocable, embarrassing license to exist in the same room, call, or general vicinity as the quiz board. This license may be revoked at any time for any reason, including but not limited to: winning too many points, losing too gracefully, knowing a suspicious amount about medieval agriculture, or making the Host feel bad about their question-writing.
 
-4. DATA COLLECTION. By participating, you consent to the collection of your biometric stress data, your opinions about whether "tomato" is a fruit or vegetable, and a detailed log of every time you sighed during gameplay.
+2. RESTRICTION ON FUN. You agree not to have an unreasonable amount of fun without first submitting Form 27-B to the Fun Allowance Committee (FAC) in triplicate. The FAC meets quarterly, except in Q2, when it does not feel like it, and in Q4, when it is on a retreat that you are paying for.
 
-5. INDEMNIFICATION. You agree to indemnify, defend, and hold harmless the host, the quiz board, the Wi-Fi router, and any houseplants in the room from any and all claims arising from your participation, including claims relating to being screwed over by another player.
+3. INTELLECTUAL PROPERTY. Any and all answers you provide, thoughts you think, puns you attempt, or guesses you blurt during the Quiz become the sole and exclusive intellectual property of DLMQAM Corp GmbH Ltd & Sons LLC KG. You retain no rights to your own cleverness, your own reflexes, or, in extreme cases, your own catchphrases.
 
-6. DISCLAIMER OF WARRANTIES. THE QUIZ IS PROVIDED "AS IS." WE MAKE NO WARRANTIES THAT THE QUESTIONS ARE FAIR, THE ANSWERS ARE CORRECT, OR THAT THE EXPERIENCE WILL BE ENJOYABLE. IN FACT, WE ACTIVELY DISCLAIM THE WARRANTY OF ENJOYABILITY.
+4. DATA COLLECTION. By participating, you consent to the collection of: your biometric stress data; your resting heart rate during a Risk question; your firmly-held opinion about whether a tomato is a fruit or a vegetable; a detailed timestamped log of every time you sighed, groaned, or muttered "oh come ON"; and the exact angle of your eyebrows at the moment you got screwed.
 
-7. LIMITATION OF LIABILITY. IN NO EVENT SHALL THE HOST BE LIABLE FOR DAMAGES EXCEEDING €0.00, WHICH IS ALSO THE AMOUNT OF MONEY YOU PAID TO PLAY.
+5. THE SCREW MECHANISM. You acknowledge that other Players may deploy Screws against you, including but not limited to: being forced to buzz against your will; having your screen inverted; being renamed to something undignified; and being made to read agreements substantially similar to this one. You waive any and all rights to dignity, composure, and the moral high ground for the duration of the Quiz.
 
-8. GOVERNING LAW. This agreement is governed by the laws of wherever you are sitting right now, or whichever jurisdiction has the most ridiculous contract enforcement provisions, whichever is more amusing.
+6. INDEMNIFICATION. You agree to indemnify, defend, and hold harmless the Host, the quiz board, the Wi-Fi router, the buzzer sound effect, and any houseplants within a five-metre radius from any and all claims, demands, or passive-aggressive glances arising from your participation, including claims relating to being screwed over by a so-called friend.
 
-9. SEVERABILITY. If any portion of this agreement is found to be unenforceable, that portion shall be replaced with text that is equally unenforceable but slightly more confusing.
+7. DISCLAIMER OF WARRANTIES. THE QUIZ IS PROVIDED "AS IS" AND "AS AVAILABLE" AND "AS ANNOYING AS NECESSARY." WE MAKE NO WARRANTY THAT THE QUESTIONS ARE FAIR, THAT THE ANSWERS ARE CORRECT, THAT THE CATEGORIES MAKE SENSE, OR THAT THE EXPERIENCE WILL BE ENJOYABLE. WE EXPRESSLY DISCLAIM THE IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND BASIC EMOTIONAL SAFETY.
 
-10. ENTIRE AGREEMENT. This document, combined with your inexplicable decision to keep reading it, constitutes the entire agreement between the parties. You have been screwed. Have fun.
+8. LIMITATION OF LIABILITY. IN NO EVENT SHALL THE HOST BE LIABLE FOR DAMAGES EXCEEDING €0.00, WHICH IS ALSO, COINCIDENTALLY, THE PRECISE AMOUNT OF MONEY YOU PAID TO PLAY. THIS LIMITATION APPLIES EVEN IF THE HOST WAS ADVISED OF THE POSSIBILITY OF SUCH DAMAGES, LAUGHED, AND PROCEEDED ANYWAY.
 
-By scrolling to the bottom of this document, you acknowledge that you have read, understood, and reluctantly accepted all of the above.`;
+9. ASSUMPTION OF RISK. You understand that quizzing is an inherently dangerous activity that may result in wounded pride, mild competitive rage, the sudden discovery that you do not, in fact, know the capital of Australia, and lasting reputational harm at the next family gathering.
+
+10. NON-DISPARAGEMENT. You agree not to describe the Host's questions as "unfair," "obscure," "clearly googled five minutes ago," or "a war crime" within earshot of the Host, on social media, or in your memoirs.
+
+11. FORCE MAJEURE. Neither party shall be liable for failure to perform due to causes beyond reasonable control, including but not limited to: acts of God, acts of the Host, snacks running out, the dog eating the buzzer, or someone's phone ringing during Final Jeopardy.
+
+12. GOVERNING LAW. This Agreement is governed by the laws of wherever you happen to be sitting right now, or whichever jurisdiction has the most ridiculous contract-enforcement provisions, whichever is funnier to the Host.
+
+13. SEVERABILITY. If any portion of this Agreement is found to be unenforceable, that portion shall be replaced with text that is equally unenforceable but written in a slightly more confusing manner, and the remainder shall continue to bind you with full and unnecessary force.
+
+14. SURVIVAL. Sections you would most like to forget shall survive termination of this Agreement, the end of the Quiz, the heat death of the universe, and any subsequent reboot thereof.
+
+15. AMENDMENT. The Host may amend this Agreement at any time by thinking about it. Continued breathing constitutes acceptance of the amended terms.
+
+16. ENTIRE AGREEMENT. This document, combined with your inexplicable decision to keep reading all the way down here, constitutes the entire agreement between the parties and supersedes all prior agreements, promises, and moments of dignity. You have been screwed. Please proceed to have (a regulated and pre-approved amount of) fun.
+
+By scrolling to the bottom of this document and clicking accept, you acknowledge that you have read, understood, ignored, and reluctantly accepted every single word above, including the ones you skimmed.`;
 
   return (
     <div className={clsx("min-h-screen bg-yellow-400 text-black p-6 font-sans flex flex-col selection:bg-white relative", isFlipped && "rotate-180")}>
@@ -984,15 +1019,14 @@ By scrolling to the bottom of this document, you acknowledge that you have read,
             <h2 className="text-2xl font-black uppercase tracking-tighter mb-1">End User License Agreement</h2>
             {eulaSourceName && <p className="text-sm font-bold text-red-600 mb-3">⚠️ {eulaSourceName} screwed you — accept to continue</p>}
             <div
-              className="flex-1 overflow-y-auto text-xs font-mono text-zinc-700 leading-relaxed bg-zinc-50 brutal-border p-4 mb-4"
-              style={{ minHeight: 200 }}
-              onScroll={e => {
-                const el = e.currentTarget;
-                if (el.scrollHeight - el.scrollTop - el.clientHeight < 20) setEulaScrolled(true);
-              }}
+              ref={eulaScrollRef}
+              className="overflow-y-auto text-xs font-mono text-zinc-700 leading-relaxed bg-zinc-50 brutal-border p-4 mb-3"
+              style={{ height: "45vh" }}
+              onScroll={e => checkEulaScrolled(e.currentTarget)}
             >
-              {EULA_TEXT.split('\n').map((line, i) => <p key={i} className="mb-2">{line}</p>)}
+              {EULA_TEXT.split('\n').map((line, i) => <p key={i} className="mb-3">{line}</p>)}
             </div>
+            {!eulaScrolled && <p className="text-[10px] font-black uppercase tracking-widest text-red-500 mb-2 text-center animate-pulse">▼ Keep scrolling to the very bottom ▼</p>}
             <button
               disabled={!eulaScrolled}
               onClick={() => { socket.emit("eula_accepted"); setShowEulaModal(false); }}
